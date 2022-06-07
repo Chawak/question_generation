@@ -59,6 +59,8 @@ class DataProcessor:
         
         if model_type == "t5":
             self.sep_token = "<sep>"
+        elif model_type == "mt5":
+            self.sep_token = "<sep>"
         elif model_type == "bart":
             self.sep_token = "<sep>"
         else:
@@ -66,6 +68,8 @@ class DataProcessor:
   
     def process(self, dataset):
         if self.model_type == "t5":
+            dataset = dataset.map(self._add_eos_examples)
+        elif self.model_type == "mt5":
             dataset = dataset.map(self._add_eos_examples)
         
         dataset = dataset.map(self._add_special_tokens)
@@ -101,8 +105,8 @@ class DataProcessor:
         )
 
         encodings = {
-            'source_ids': source_encoding['input_ids'], 
-            'target_ids': target_encoding['input_ids'],
+            'input_ids': source_encoding['input_ids'], 
+            'decoder_input_ids': target_encoding['input_ids'],
             'attention_mask': source_encoding['attention_mask'],
         }
 
@@ -147,13 +151,15 @@ def main():
 
     if data_args.model_type == 't5':
         tokenizer = T5Tokenizer.from_pretrained("t5-base")
+    elif data_args.model_type == 'mt5':
+        tokenizer = T5Tokenizer.from_pretrained("google/mt5-base")
     else:
         tokenizer = BartTokenizer.from_pretrained("facebook/bart-base")
     
     tokenizer.add_tokens(['<sep>', '<hl>'])
     
-    train_dataset = nlp.load_dataset(data_args.dataset_path, name=data_args.qg_format, split=nlp.Split.TRAIN)
-    valid_dataset = nlp.load_dataset(data_args.dataset_path, name=data_args.qg_format, split=nlp.Split.VALIDATION)
+    train_dataset = nlp.load_dataset(data_args.dataset_path, ignore_verifications  = True,name=data_args.qg_format, split=nlp.Split.TRAIN)
+    valid_dataset = nlp.load_dataset(data_args.dataset_path, ignore_verifications  = True,name=data_args.qg_format, split=nlp.Split.VALIDATION)
 
     processor = DataProcessor(
         tokenizer,
@@ -173,7 +179,7 @@ def main():
     train_dataset = processor.process(train_dataset)
     valid_dataset = processor.process(valid_dataset)
 
-    columns = ["source_ids", "target_ids", "attention_mask"]
+    columns = ["input_ids", "decoder_input_ids", "attention_mask"]
     train_dataset.set_format(type='torch', columns=columns)
     valid_dataset.set_format(type='torch', columns=columns)
 
