@@ -39,10 +39,12 @@ class QGPipeline:
         if self.ans_model is not self.model:
             self.ans_model.to(self.device)
 
-        assert self.model.__class__.__name__ in ["T5ForConditionalGeneration", "BartForConditionalGeneration"]
+        assert self.model.__class__.__name__ in ["T5ForConditionalGeneration", "BartForConditionalGeneration","MT5ForConditionalGeneration"]
         
         if "T5ForConditionalGeneration" in self.model.__class__.__name__:
             self.model_type = "t5"
+        elif "MT5ForConditionalGeneration" in self.model.__class__.__name__:
+            self.model_type = "mt5"
         else:
             self.model_type = "bart"
 
@@ -50,7 +52,6 @@ class QGPipeline:
         inputs = " ".join(inputs.split())
         sents, answers = self._extract_answers(inputs)
         flat_answers = list(itertools.chain(*answers))
-        
         if len(flat_answers) == 0:
           return []
 
@@ -80,17 +81,18 @@ class QGPipeline:
     def _extract_answers(self, context):
         sents, inputs = self._prepare_inputs_for_ans_extraction(context)
         inputs = self._tokenize(inputs, padding=True, truncation=True)
-
+        print(sents, inputs,"extract_answer")
         outs = self.ans_model.generate(
             input_ids=inputs['input_ids'].to(self.device), 
             attention_mask=inputs['attention_mask'].to(self.device), 
             max_length=32,
         )
-        
+        print(outs,"outs")
         dec = [self.ans_tokenizer.decode(ids, skip_special_tokens=False) for ids in outs]
-        answers = [item.split('<sep>') for item in dec]
+        print(dec,"dec")
+        answers = [item.replace("<pad> ","").split('<sep>') for item in dec]
         answers = [i[:-1] for i in answers]
-        
+        print(answers,"answers")
         return sents, answers
     
     def _tokenize(self,
@@ -123,7 +125,7 @@ class QGPipeline:
                 source_text = "%s %s" % (source_text, sent)
                 source_text = source_text.strip()
             
-            if self.model_type == "t5":
+            if self.model_type == "t5" or self.model_type == "mt5":
                 source_text = source_text + " </s>"
             inputs.append(source_text)
 
@@ -133,12 +135,13 @@ class QGPipeline:
         inputs = []
         for i, answer in enumerate(answers):
             if len(answer) == 0: continue
+            print(answer)
             for answer_text in answer:
                 sent = sents[i]
                 sents_copy = sents[:]
                 
                 answer_text = answer_text.strip()
-                
+                print("answer_text",answer_text)
                 ans_start_idx = sent.index(answer_text)
                 
                 sent = f"{sent[:ans_start_idx]} <hl> {answer_text} <hl> {sent[ans_start_idx + len(answer_text): ]}"
@@ -146,7 +149,7 @@ class QGPipeline:
                 
                 source_text = " ".join(sents_copy)
                 source_text = f"generate question: {source_text}" 
-                if self.model_type == "t5":
+                if self.model_type == "t5" or self.model_type == "mt5":
                     source_text = source_text + " </s>"
                 
                 inputs.append({"answer": answer_text, "source_text": source_text})
@@ -158,7 +161,7 @@ class QGPipeline:
         examples = []
         for answer in flat_answers:
             source_text = f"answer: {answer} context: {context}"
-            if self.model_type == "t5":
+            if self.model_type == "t5" or self.model_type == "mt5":
                 source_text = source_text + " </s>"
             
             examples.append({"answer": answer, "source_text": source_text})
@@ -179,7 +182,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
     
     def _prepare_inputs_for_qa(self, question, context):
         source_text = f"question: {question}  context: {context}"
-        if self.model_type == "t5":
+        if self.model_type == "t5" or self.model_type == "mt5":
             source_text = source_text + " </s>"
         return  source_text
     
@@ -211,10 +214,12 @@ class E2EQGPipeline:
         self.device = "cuda" if torch.cuda.is_available() and use_cuda else "cpu"
         self.model.to(self.device)
 
-        assert self.model.__class__.__name__ in ["T5ForConditionalGeneration", "BartForConditionalGeneration"]
+        assert self.model.__class__.__name__ in ["T5ForConditionalGeneration", "BartForConditionalGeneration","MT5ForConditionalGeneration"]
         
         if "T5ForConditionalGeneration" in self.model.__class__.__name__:
             self.model_type = "t5"
+        elif "MT5ForConditionalGeneration" in self.model.__class__.__name__:
+            self.model_type = "mt5"
         else:
             self.model_type = "bart"
         
@@ -252,12 +257,14 @@ class E2EQGPipeline:
 
         prediction = self.tokenizer.decode(outs[0], skip_special_tokens=True)
         questions = prediction.split("<sep>")
-        questions = [question.strip() for question in questions[:-1]]
+        if len(questions)>1:
+            questions=questions[:-1]
+        questions = [question.strip() for question in questions]
         return questions
     
     def _prepare_inputs_for_e2e_qg(self, context):
         source_text = f"generate questions: {context}"
-        if self.model_type == "t5":
+        if self.model_type == "t5" or self.model_type == "mt5":
             source_text = source_text + " </s>"
         
         inputs = self._tokenize([source_text], padding=False)
