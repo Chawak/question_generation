@@ -26,6 +26,7 @@ from utils import freeze_embeds, assert_not_all_frozen
 
 MODEL_TYPE_TO_TOKENIZER = {
     "t5": T5Tokenizer,
+    "mt5": T5Tokenizer,
     "bart": BartTokenizer,
 }
 
@@ -108,6 +109,7 @@ def main(args_file=None):
 
     assert model_args.model_type in list(MODEL_TYPE_TO_TOKENIZER.keys()), "model type should be 't5' or 'bart'"
 
+    training_args.save_steps=2400
     if (
         os.path.exists(training_args.output_dir)
         and os.listdir(training_args.output_dir)
@@ -185,7 +187,6 @@ def main(args_file=None):
         train_dataset=train_dataset,
         eval_dataset=valid_dataset,
         data_collator=data_collator,
-        prediction_loss_only=True,
         label_smoothing=model_args.label_smoothing
     )
 
@@ -200,7 +201,7 @@ def main(args_file=None):
         trainer.save_model()
         # For convenience, we also re-save the tokenizer to the same directory,
         # so that you can share your model easily on huggingface.co/models =)
-        if trainer.is_world_master():
+        if trainer.is_world_process_zero():
             tokenizer.save_pretrained(training_args.output_dir)
 
     # Evaluation
