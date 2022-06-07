@@ -72,9 +72,9 @@ class SquadMultitaskConfig(nlp.BuilderConfig):
 class SquadMultitask(nlp.GeneratorBasedBuilder):
     """SQUAD: The Stanford Question Answering Dataset. Version 1.1."""
 
-    _URL = "https://rajpurkar.github.io/SQuAD-explorer/dataset/"
-    _DEV_FILE = "dev-v1.1.json"
-    _TRAINING_FILE = "train-v1.1.json"
+    _URL = "/content/"
+    _DEV_FILE = "valid_dataset.json"
+    _TRAINING_FILE = "train_dataset.json"
 
     BUILDER_CONFIGS = [
         SquadMultitaskConfig(
@@ -120,14 +120,14 @@ class SquadMultitask(nlp.GeneratorBasedBuilder):
         gold_text = answer['text']
         start_idx = answer['answer_start']
         end_idx = start_idx + len(gold_text)
+
         if context[start_idx:end_idx] == gold_text:
             return start_idx, end_idx       # When the gold label position is good
-        elif context[start_idx-1:end_idx-1] == gold_text:
-            return start_idx-1, end_idx-1   # When the gold label is off by one character
-        elif context[start_idx-2:end_idx-2] == gold_text:
-            return start_idx-2, end_idx-2   # When the gold label is off by two character
-        else:
-            raise ValueError()
+        real_start_idx = context.find(gold_text)
+
+        if real_start_idx==-1:
+            return 0,len(gold_text)
+        return real_start_idx,real_start_idx+len(gold_text)
     
     def process_qa_text(self, context, question, answer):
         ans_gen_input = f"question: {question}  context: {context}"
@@ -141,9 +141,13 @@ class SquadMultitask(nlp.GeneratorBasedBuilder):
             que_gen_input = f"answer: {answer_text}  context: {context}"
         elif self.config.qg_format == "highlight":
             start_pos, end_pos = self._get_correct_alignement(context, answer)
+            if len(answer_text)>end_pos-start_pos+1:
+                answer_text=answer_text[:end_pos-start_pos+1]
             que_gen_input = f"generate question: {context[:start_pos]} {{hl_token}} {answer_text} {{hl_token}} {context[end_pos:]}"
         else:
             start_pos, end_pos = self._get_correct_alignement(context, answer)
+            if len(answer_text)>end_pos-start_pos+1:
+                answer_text=answer_text[:end_pos-start_pos+1]
             que_gen_input = f"answer: {answer_text} context: {context[:start_pos]} {{hl_token}} {answer_text} {{hl_token}} {context[end_pos:]}"
         
         que_gen_target = f"{question}"
