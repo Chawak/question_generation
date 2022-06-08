@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 import torch
 import nlp
-from transformers import T5Tokenizer, BartTokenizer, HfArgumentParser
+from transformers import T5Tokenizer, BartTokenizer, MBartTokenizer,HfArgumentParser
 
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ class DataTrainingArguments:
     task: str = field(
         metadata={"help": "Which task 'qa', 'qg', 'e2e_qg', 'ans_ext', 'multi'. 'multi' means 'qa', 'qg', 'ans_ext' tasks"}, 
     )
-    model_type: str = field(metadata={"help": "One of 't5', 'bart'"})
+    model_type: str = field(metadata={"help": "One of 't5', 'bart', 'mt5','mbart'"})
     dataset_path: Optional[str] = field(
         default="data/squad_multitask",
         metadata={"help": "Path for dataset directory"}, 
@@ -62,6 +62,8 @@ class DataProcessor:
         elif model_type == "mt5":
             self.sep_token = "<sep>"
         elif model_type == "bart":
+            self.sep_token = "<sep>"
+        elif model_type == "mbart":
             self.sep_token = "<sep>"
         else:
             self.sep_token = "[SEP]"
@@ -153,6 +155,8 @@ def main():
         tokenizer = T5Tokenizer.from_pretrained("t5-base")
     elif data_args.model_type == 'mt5':
         tokenizer = T5Tokenizer.from_pretrained("google/mt5-base")
+    elif data_args.model_type == 'mbart':
+        tokenizer = MBartTokenizer.from_pretrained("facebook/mbart-large-50")
     else:
         tokenizer = BartTokenizer.from_pretrained("facebook/bart-base")
     
