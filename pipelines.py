@@ -66,7 +66,15 @@ class QGPipeline:
         questions = self._generate_questions(qg_inputs)
         output = [{'answer': example['answer'], 'question': que} for example, que in zip(qg_examples, questions)]
         return output
-    
+        
+    def generate_question_from_context_and_answer_prepend(self, context,answers):
+        
+        qg_examples = self._prepare_inputs_for_qg_from_answers_prepend(context, answers)
+
+        qg_inputs = [example['source_text'] for example in qg_examples]
+        questions = self._generate_questions(qg_inputs)
+        output = [{'answer': example['answer'], 'question': que} for example, que in zip(qg_examples, questions)]
+        return output
     def _generate_questions(self, inputs):
         inputs = self._tokenize(inputs, padding=True, truncation=True)
         
@@ -78,23 +86,20 @@ class QGPipeline:
         )
         
         questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
+        questions = [que.split("<sep>") for que in questions]
         return questions
     
     def _extract_answers(self, context):
         sents, inputs = self._prepare_inputs_for_ans_extraction(context)
         inputs = self._tokenize(inputs, padding=True, truncation=True)
-        print(sents, inputs,"extract_answer")
         outs = self.ans_model.generate(
             input_ids=inputs['input_ids'].to(self.device), 
             attention_mask=inputs['attention_mask'].to(self.device), 
             max_length=32,
         )
-        print(outs,"outs")
         dec = [self.ans_tokenizer.decode(ids, skip_special_tokens=False) for ids in outs]
-        print(dec,"dec")
         answers = [item.replace("<pad> ","").split('<sep>') for item in dec]
         answers = [i[:-1] for i in answers]
-        print(answers,"answers")
         return sents, answers
     
     def _tokenize(self,
@@ -137,13 +142,11 @@ class QGPipeline:
         inputs = []
         for i, answer in enumerate(answers):
             if len(answer) == 0: continue
-            print(answer)
             for answer_text in answer:
                 sent = sents[i]
                 sents_copy = sents[:]
                 
                 answer_text = answer_text.strip()
-                print("answer_text",answer_text)
                 ans_start_idx = sent.index(answer_text)
                 
                 sent = f"{sent[:ans_start_idx]} <hl> {answer_text} <hl> {sent[ans_start_idx + len(answer_text): ]}"
@@ -180,7 +183,10 @@ class MultiTaskQAQGPipeline(QGPipeline):
             return super().__call__(inputs)
         else:
             # do qa
-            return self._extract_answer(inputs["question"], inputs["context"])
+            if inputs["task"]=="qa":
+                return self._extract_answer(inputs["question"], inputs["context"])
+            else :
+                return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"])
     
     def _prepare_inputs_for_qa(self, question, context):
         source_text = f"question: {question}  context: {context}"
