@@ -3,15 +3,17 @@ import logging
 from typing import Optional, Dict, Union
 
 from nltk import sent_tokenize
-
+import tensorflow as tf
 import torch
 from transformers import(
     AutoModelForSeq2SeqLM, 
     AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizer,
+    set_seed
 )
-
+tf.random.set_seed(42)
+set_seed(42)
 logger = logging.getLogger(__name__)
 
 class QGPipeline:
@@ -25,6 +27,7 @@ class QGPipeline:
         qg_format: str,
         use_cuda: bool
     ):
+        
         self.model = model
         self.tokenizer = tokenizer
 
@@ -67,26 +70,78 @@ class QGPipeline:
         output = [{'answer': example['answer'], 'question': que} for example, que in zip(qg_examples, questions)]
         return output
         
-    def generate_question_from_context_and_answer_prepend(self, context,answers):
+    def generate_question_from_context_and_answer_prepend(self, context,answers,generate_mode,num_question_per_input=3):
         
         qg_examples = self._prepare_inputs_for_qg_from_answers_prepend(context, answers)
 
         qg_inputs = [example['source_text'] for example in qg_examples]
-        questions = self._generate_questions(qg_inputs)
+        questions = self._generate_questions(qg_inputs,generate_mode,num_question_per_input)
         output = [{'answer': example['answer'], 'question': que} for example, que in zip(qg_examples, questions)]
         return output
-    def _generate_questions(self, inputs):
+    def _generate_questions(self, inputs,generate_mode,num_question_per_input=3):
         inputs = self._tokenize(inputs, padding=True, truncation=True)
+
+        if generate_mode =="no_repeat_ngram":
+            outs = self.model.generate(
+                input_ids=inputs['input_ids'].to(self.device), 
+                attention_mask=inputs['attention_mask'].to(self.device), 
+                max_length=96,
+                num_beams=4,
+                no_repeat_ngram_size=9
+            )
+            questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
+            questions = [que.split("<sep>") for que in questions]
+
+        elif generate_mode=="num_return_sequence":
+            outs = self.model.generate(
+                input_ids=inputs['input_ids'].to(self.device), 
+                attention_mask=inputs['attention_mask'].to(self.device), 
+                max_length=96,
+                num_beams=12,
+                num_return_sequences=num_question_per_input
+            )
+            
+            questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
+            questions = [questions[i:i+num_question_per_input] for i in range(0,len(questions),num_question_per_input)]
+        elif generate_mode=="diverse_beam_search":
+            outs = self.model.generate(
+                input_ids=inputs['input_ids'].to(self.device), 
+                attention_mask=inputs['attention_mask'].to(self.device), 
+                max_length=64,
+                num_beams=12,
+                num_beam_groups=4,
+                diversity_penalty=3.25,
+                num_return_sequences=num_question_per_input
+            )
+            questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
+            questions = [questions[i:i+num_question_per_input] for i in range(0,len(questions),num_question_per_input)]
+        elif generate_mode=="sample": 
+            tf.random.set_seed(42)
+            set_seed(42)
+            num_generated=num_question_per_input*3
+            outs = self.model.generate(
+                input_ids=inputs['input_ids'].to(self.device), 
+                attention_mask=inputs['attention_mask'].to(self.device), 
+                max_length=64,
+                do_sample=True,
+                top_k=20, 
+                temperature=1.2,
+                num_return_sequences=num_generated
+            )
+            
+            questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
+            questions = [sorted(list(set(questions[i:i+num_generated])))[:num_question_per_input] for i in range(0,len(questions),num_generated)]
         
-        outs = self.model.generate(
-            input_ids=inputs['input_ids'].to(self.device), 
-            attention_mask=inputs['attention_mask'].to(self.device), 
-            max_length=32,
-            num_beams=4,
-        )
-        
-        questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
-        questions = [que.split("<sep>") for que in questions]
+        else:
+            outs = self.model.generate(
+                input_ids=inputs['input_ids'].to(self.device), 
+                attention_mask=inputs['attention_mask'].to(self.device), 
+                max_length=64,
+                num_beams=4,
+            )
+            questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
+            questions = [que.split("<sep>") for que in questions]
+
         return questions
     
     def _extract_answers(self, context):
@@ -186,8 +241,10 @@ class MultiTaskQAQGPipeline(QGPipeline):
             if inputs["task"]=="qa":
                 return self._extract_answer(inputs["question"], inputs["context"])
             else :
-                return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"])
-    
+              if "num_question_per_input" in inputs:
+                return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],inputs["generate_mode"],inputs["num_question_per_input"])
+              else:
+                return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],inputs["generate_mode"],3)
     def _prepare_inputs_for_qa(self, question, context):
         source_text = f"question: {question}  context: {context}"
         if self.model_type == "t5" or self.model_type == "mt5":
