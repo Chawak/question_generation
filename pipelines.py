@@ -2,7 +2,9 @@ import itertools
 import logging
 from typing import Optional, Dict, Union
 
-from nltk import sent_tokenize
+from nltk import sent_tokenize as en_sent_tokenize
+from pythainlp.tokenize import word_tokenize,sent_tokenize
+from pythainlp.util import countthai
 import tensorflow as tf
 import torch
 from transformers import(
@@ -10,8 +12,16 @@ from transformers import(
     AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizer,
-    set_seed
+    set_seed,
+    pipeline as ner_pipeline
 )
+from flair.data import Sentence
+from flair.models import SequenceTagger
+
+model_name = "wangchanberta-base-att-spm-uncased" 
+
+#create tokenizer
+dataset_name = "lst20"
 tf.random.set_seed(42)
 set_seed(42)
 logger = logging.getLogger(__name__)
@@ -28,6 +38,20 @@ class QGPipeline:
         use_cuda: bool
     ):
         
+        self.th_ner_tokenizer = AutoTokenizer.from_pretrained(
+                f'airesearch/{model_name}' ,
+                revision='main',
+                model_max_length=416,)
+
+        self.th_ner_pipeline =  ner_pipeline(task='ner',
+            tokenizer=self.th_ner_tokenizer,
+            model = f'airesearch/{model_name}' ,
+            revision = f'finetuned@{dataset_name}-ner',
+            ignore_labels=[], 
+            grouped_entities=True)
+        
+        self.en_ner_pipeline = SequenceTagger.load("flair/ner-english-ontonotes-large")
+
         self.model = model
         self.tokenizer = tokenizer
 
@@ -53,20 +77,29 @@ class QGPipeline:
         else:
             self.model_type = "bart"
 
-    def __call__(self, inputs: str):
+    def __call__(self, inputs: str,extract_answer_mode="mt5",generate_mode="sample",num_question_per_input=3):
         inputs = " ".join(inputs.split())
         sents, answers = self._extract_answers(inputs)
         flat_answers = list(itertools.chain(*answers))
         if len(flat_answers) == 0:
           return []
 
+        if extract_answer_mode=="mt5":
+            sents, answers = self._extract_answers(inputs)
+        else :
+            sents,answers =self._extract_answers_ner(inputs)
+
         if self.qg_format == "prepend":
             qg_examples = self._prepare_inputs_for_qg_from_answers_prepend(inputs, answers)
         else:
             qg_examples = self._prepare_inputs_for_qg_from_answers_hl(sents, answers)
-        
         qg_inputs = [example['source_text'] for example in qg_examples]
-        questions = self._generate_questions(qg_inputs)
+        questions=[]
+        bs=10
+        for i in range(0,len(qg_inputs)//bs + (1 if len(qg_inputs)%bs else 0)):
+            tmp_questions = self._generate_questions(qg_inputs[i*bs:(i+1)*bs],generate_mode,num_question_per_input)
+            questions+=tmp_questions
+        #questions = self._generate_questions(qg_inputs,generate_mode)
         output = [{'answer': example['answer'], 'question': que} for example, que in zip(qg_examples, questions)]
         return output
         
@@ -75,9 +108,17 @@ class QGPipeline:
         qg_examples = self._prepare_inputs_for_qg_from_answers_prepend(context, answers)
 
         qg_inputs = [example['source_text'] for example in qg_examples]
-        questions = self._generate_questions(qg_inputs,generate_mode,num_question_per_input)
+        questions=[]
+        bs=3
+        if generate_mode=="sample":
+            bs=1
+        for i in range(0,len(qg_inputs)//bs + (1 if len(qg_inputs)%bs else 0)):
+            
+            tmp_questions = self._generate_questions(qg_inputs[i*bs:(i+1)*bs],generate_mode,num_question_per_input)
+            questions+=tmp_questions
         output = [{'answer': example['answer'], 'question': que} for example, que in zip(qg_examples, questions)]
         return output
+
     def _generate_questions(self, inputs,generate_mode,num_question_per_input=3):
         inputs = self._tokenize(inputs, padding=True, truncation=True)
 
@@ -85,9 +126,10 @@ class QGPipeline:
             outs = self.model.generate(
                 input_ids=inputs['input_ids'].to(self.device), 
                 attention_mask=inputs['attention_mask'].to(self.device), 
-                max_length=96,
+                max_length=64,
                 num_beams=4,
-                no_repeat_ngram_size=9
+                repetition_penalty=2.0,
+                no_repeat_ngram_size=7
             )
             questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
             questions = [que.split("<sep>") for que in questions]
@@ -118,14 +160,14 @@ class QGPipeline:
         elif generate_mode=="sample": 
             tf.random.set_seed(42)
             set_seed(42)
-            num_generated=num_question_per_input*3
+            num_generated=num_question_per_input*2
             outs = self.model.generate(
                 input_ids=inputs['input_ids'].to(self.device), 
                 attention_mask=inputs['attention_mask'].to(self.device), 
                 max_length=64,
                 do_sample=True,
-                top_k=20, 
-                temperature=1.2,
+                top_k=5, 
+                temperature=1.05,
                 num_return_sequences=num_generated
             )
             
@@ -155,8 +197,53 @@ class QGPipeline:
         dec = [self.ans_tokenizer.decode(ids, skip_special_tokens=False) for ids in outs]
         answers = [item.replace("<pad> ","").split('<sep>') for item in dec]
         answers = [i[:-1] for i in answers]
+        
         return sents, answers
     
+    def wangchan_ner_result_to_extracted_answer(self,result,original_text):
+        new_result = [x for x in result if x["entity_group"]!="O"]
+
+        entities = []
+        tmp_entity = ""
+        for elem in new_result:
+            if elem["entity_group"][0]=="B" or elem["entity_group"][0]=="O":
+                if tmp_entity!="":
+                    entities+=[tmp_entity]
+                    tmp_entity=elem["word"] if elem["entity_group"][0]=="B" else ""
+                else:
+                    tmp_entity+=elem["word"]
+            else :
+                tmp_entity+=elem["word"]
+
+        if tmp_entity!="":
+            entities+=[tmp_entity]
+
+        entities = [entity.replace(" ","").replace("<_>"," ")  for entity in entities ]
+        entities = [entity.strip() if entity in original_text else (entity[0].upper()+entity[1:]).strip() for entity in entities ]
+            
+        return entities
+
+    def preprocess_for_wangchan(self,text):
+        return "".join(word_tokenize(text.lower().replace(" ","<_>")))
+
+    def get_th_ner(self,sentence):
+        return self.wangchan_ner_result_to_extracted_answer(self.th_ner_pipeline(self.preprocess_for_wangchan(sentence)),sentence)
+
+    def _extract_answers_ner(self, context):
+        answers = []
+        if countthai(context)>0:
+            sents = sent_tokenize(context)
+            for sent in sents:
+                answers.append(self.get_th_ner(sent))
+        else :
+            sents = en_sent_tokenize(context)
+            for sent in sents:
+                sentence = Sentence(sent)
+                self.en_ner_pipeline.predict(sentence)
+                answers.append([x.text for x in sentence.get_spans('ner')])
+        print(answers)
+        return sents, answers
+
     def _tokenize(self,
         inputs,
         padding=True,
@@ -219,7 +306,11 @@ class QGPipeline:
     def _prepare_inputs_for_qg_from_answers_prepend(self, context, answers):
         flat_answers = list(itertools.chain(*answers))
         examples = []
+        added_answer = set()
         for answer in flat_answers:
+            if answer in added_answer:
+              continue
+            added_answer.add(answer)
             source_text = f"answer: {answer} context: {context}"
             if self.model_type == "t5" or self.model_type == "mt5":
                 source_text = source_text + " </s>"
@@ -232,26 +323,27 @@ class MultiTaskQAQGPipeline(QGPipeline):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
     
-    def __call__(self, inputs: Union[Dict, str]):
+    def __call__(self, inputs: Union[Dict, str],extract_answer_mode="mt5",generate_mode="sample"):
         if type(inputs) is str:
             # do qg
-            return super().__call__(inputs)
+            return super().__call__(inputs,extract_answer_mode,generate_mode)
         else:
             # do qa
             if inputs["task"]=="qa":
-                return self._extract_answer(inputs["question"], inputs["context"])
+                return self.question_answering(inputs["question"], inputs["context"])
             else :
               if "num_question_per_input" in inputs:
                 return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],inputs["generate_mode"],inputs["num_question_per_input"])
               else:
                 return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],inputs["generate_mode"],3)
+    
     def _prepare_inputs_for_qa(self, question, context):
         source_text = f"question: {question}  context: {context}"
         if self.model_type == "t5" or self.model_type == "mt5":
             source_text = source_text + " </s>"
         return  source_text
     
-    def _extract_answer(self, question, context):
+    def question_answering(self, question, context):
         source_text = self._prepare_inputs_for_qa(question, context)
         inputs = self._tokenize([source_text], padding=False)
     
