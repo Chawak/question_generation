@@ -241,7 +241,6 @@ class QGPipeline:
                 sentence = Sentence(sent)
                 self.en_ner_pipeline.predict(sentence)
                 answers.append([x.text for x in sentence.get_spans('ner')])
-        print(answers)
         return sents, answers
 
     def _tokenize(self,
