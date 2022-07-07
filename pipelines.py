@@ -263,7 +263,11 @@ class QGPipeline:
         return inputs
     
     def _prepare_inputs_for_ans_extraction(self, text):
-        sents = sent_tokenize(text)
+        if countthai(text)>0:
+            sents = sent_tokenize(text)
+        else :
+            sents = en_sent_tokenize(text)
+
 
         inputs = []
         for i in range(len(sents)):
