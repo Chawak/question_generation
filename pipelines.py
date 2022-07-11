@@ -100,7 +100,7 @@ class QGPipeline:
             tmp_questions = self._generate_questions(qg_inputs[i*bs:(i+1)*bs],generate_mode,num_question_per_input)
             questions+=tmp_questions
         #questions = self._generate_questions(qg_inputs,generate_mode)
-        output = [{'answer': example['answer'], 'question': que} for example, que in zip(qg_examples, questions)]
+        output = [{'answer': example['answer'], 'question': [q.strip() for q in que]} for example, que in zip(qg_examples, questions)]
         return output
         
     def generate_question_from_context_and_answer_prepend(self, context,answers,generate_mode,num_question_per_input=3):
@@ -188,15 +188,23 @@ class QGPipeline:
     
     def _extract_answers(self, context):
         sents, inputs = self._prepare_inputs_for_ans_extraction(context)
-        inputs = self._tokenize(inputs, padding=True, truncation=True)
-        outs = self.ans_model.generate(
-            input_ids=inputs['input_ids'].to(self.device), 
-            attention_mask=inputs['attention_mask'].to(self.device), 
-            max_length=32,
-        )
-        dec = [self.ans_tokenizer.decode(ids, skip_special_tokens=False) for ids in outs]
-        answers = [item.replace("<pad> ","").split('<sep>') for item in dec]
-        answers = [i[:-1] for i in answers]
+        bs=32
+        
+        real_answers=[]
+        
+        for i in range(0,len(inputs)//bs + (1 if len(inputs)%bs else 0)):
+            
+            batch_inputs = self._tokenize(inputs[i*bs:(i+1)*bs], padding=True, truncation=True)
+            outs = self.ans_model.generate(
+                input_ids=batch_inputs['input_ids'].to(self.device), 
+                attention_mask=batch_inputs['attention_mask'].to(self.device), 
+                max_length=32,
+            )
+            dec = [self.ans_tokenizer.decode(ids, skip_special_tokens=False) for ids in outs]
+            answers = [item.replace("<pad> ","").replace("<pad>","").split('<sep>') for item in dec]
+            answers = [i[:-1] for i in answers]
+            answers = [[t.strip() for t in i] for i in answers ]
+            real_answers+=answers
         
         return sents, answers
     
@@ -209,7 +217,7 @@ class QGPipeline:
             if elem["entity_group"][0]=="B" or elem["entity_group"][0]=="O":
                 if tmp_entity!="":
                     entities+=[tmp_entity]
-                    tmp_entity=elem["word"] if elem["entity_group"][0]=="B" else ""
+                    tmp_entity=elem["word"].strip() if elem["word"] in original_text else (elem["word"][0].upper()+elem["word"][1:]).strip()
                 else:
                     tmp_entity+=elem["word"]
             else :
