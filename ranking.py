@@ -14,8 +14,8 @@ import itertools
 import nltk
 
 nltk.download("punkt")
-th_scorer = pickle.load(open('/content/drive/MyDrive/AIGEN/QG/thai_scorer.sav', 'rb'))
-en_scorer = pickle.load(open('/content/drive/MyDrive/AIGEN/QG/eng_scorer.sav', 'rb'))
+th_scorer = pickle.load(open('thai_scorer.sav', 'rb'))
+en_scorer = pickle.load(open('eng_scorer.sav', 'rb'))
 thai_df_col=['question_len_in_word', 'question_contain_negation', 'question_who',
        'question_what', 'question_where', 'question_when', 'question_which',
        'question_why', 'question_how', 'question_how m', 'question_Pronoun',
@@ -278,10 +278,10 @@ def ranking_feature_extract(context,question_list,answer,is_th):
 
     feat_list = []
     
-    a={"answer_"+k:v for k,v in feature_extract_single_text(answer,is_th)}
-    c={"context_"+k:v for k,v in feature_extract_single_text(context,is_th)}
-    for question in range(question_list):
-        q={"question_"+k:v for k,v in feature_extract_single_text(question,is_th)}
+    a={"answer_"+k:v for k,v in feature_extract_single_text(answer,is_th).items()}
+    c={"context_"+k:v for k,v in feature_extract_single_text(context,is_th).items()}
+    for question in question_list:
+        q={"question_"+k:v for k,v in feature_extract_single_text(question,is_th).items()}
         q.update(c)
         q.update(a)
         feat_list.append(q)
@@ -302,4 +302,4 @@ def get_ranking_score(context, question_list, answer, is_th):
         eng_df=pd.DataFrame(columns=eng_df_col)
         eng_df = eng_df.append(feat_list, ignore_index=True, sort=False).fillna(0)
         eng_df=eng_df.drop(columns=en_drop_columns)
-        return [[i,j] for i,j in zip(itertools.chain(*en_scorer.predict(thai_df)),question_list)]
+        return [[i,j] for i,j in zip(itertools.chain(*en_scorer.predict(eng_df)),question_list)]

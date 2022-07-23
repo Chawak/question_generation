@@ -17,7 +17,7 @@ from transformers import(
 )
 from flair.data import Sentence
 from flair.models import SequenceTagger
-from ner.utils import wangchan_ner_result_to_extracted_answer, preprocess_for_wangchan
+from ner_utils import wangchan_ner_result_to_extracted_answer, preprocess_for_wangchan
 from ranking import get_ranking_score
 model_name = "wangchanberta-base-att-spm-uncased" 
 
@@ -82,15 +82,15 @@ class QGPipeline:
 
     def __call__(self, inputs: str,generate_mode="tmp_diverse_beam_search",num_question=3):
         inputs = " ".join(inputs.split())
-        sents, answers = self._extract_answers(inputs)
-        flat_answers = list(itertools.chain(*answers))
-        if len(flat_answers) == 0:
-          return []
-
+        
         is_th=False        
         if countthai(inputs)>0:
             is_th=True
-
+        
+        sents, answers = self._extract_answers(inputs,is_th)
+        flat_answers = list(itertools.chain(*answers))
+        if len(flat_answers) == 0:
+          return []
 
         sents, answers = self._extract_answers(inputs,is_th)
         _,ner_answers =self._extract_answers_ner(inputs,is_th)
@@ -102,7 +102,7 @@ class QGPipeline:
             qg_examples = self._prepare_inputs_for_qg_from_answers_hl(sents, answers)
         qg_inputs = [example['source_text'] for example in qg_examples]
         questions=[]
-        bs=10
+        bs=8
         for i in range(0,len(qg_inputs)//bs + (1 if len(qg_inputs)%bs else 0)):
             tmp_questions = self._generate_questions(qg_inputs[i*bs:(i+1)*bs],generate_mode,is_th,num_question)
             questions+=tmp_questions
@@ -140,10 +140,8 @@ class QGPipeline:
           if tmp_que not in q_set:
             q_set.add(tmp_que)
             new_q.append(que)
-        
-        scored_question=get_ranking_score(context,question_list,answer,is_th)
-
-        return [q for s,q in scored_question[:num_question]]
+        scored_question=get_ranking_score(context,new_q,answer,is_th)
+        return [q for s,q in sorted(scored_question)[::-1][:num_question]]
 
     def flatten(self,nested_list):
   
@@ -342,8 +340,9 @@ class QGPipeline:
         return inputs
     
     def _prepare_inputs_for_qg_from_answers_prepend(self, context, answers):
-        flat_answers = list(itertools.chain(*answers))
+        flat_answers = list(set(list(itertools.chain(*answers))))
         examples = []
+        
         for answer in flat_answers:
             source_text = f"answer: {answer} context: {context}"
             if self.model_type == "t5" or self.model_type == "mt5":
@@ -357,10 +356,10 @@ class MultiTaskQAQGPipeline(QGPipeline):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
     
-    def __call__(self, inputs: Union[Dict, str],extract_answer_mode="mt5",generate_mode="sample"):
+    def __call__(self, inputs: Union[Dict, str],generate_mode="tmp_diverse_beam_search",num_question=3):
         if type(inputs) is str:
             # do qg
-            return super().__call__(inputs,extract_answer_mode,generate_mode)
+            return super().__call__(inputs,generate_mode,num_question)
         else:
             # do qa
             if inputs["task"]=="qa":
