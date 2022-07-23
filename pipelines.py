@@ -17,7 +17,8 @@ from transformers import(
 )
 from flair.data import Sentence
 from flair.models import SequenceTagger
-
+from ner.utils import wangchan_ner_result_to_extracted_answer, preprocess_for_wangchan
+from ranking import get_ranking_score
 model_name = "wangchanberta-base-att-spm-uncased" 
 
 #create tokenizer
@@ -53,9 +54,11 @@ class QGPipeline:
         self.en_ner_pipeline = SequenceTagger.load("flair/ner-english-ontonotes-large")
 
         self.model = model
+        self.model.eval()
         self.tokenizer = tokenizer
 
         self.ans_model = ans_model
+        self.ans_model.eval()
         self.ans_tokenizer = ans_tokenizer
 
         self.qg_format = qg_format
@@ -77,17 +80,22 @@ class QGPipeline:
         else:
             self.model_type = "bart"
 
-    def __call__(self, inputs: str,extract_answer_mode="mt5",generate_mode="tmp_diverse_beam_search",num_question=3):
+    def __call__(self, inputs: str,generate_mode="tmp_diverse_beam_search",num_question=3):
         inputs = " ".join(inputs.split())
         sents, answers = self._extract_answers(inputs)
         flat_answers = list(itertools.chain(*answers))
         if len(flat_answers) == 0:
           return []
 
-        if extract_answer_mode=="mt5":
-            sents, answers = self._extract_answers(inputs)
-        _,tmp_answers =self._extract_answers_ner(inputs)
-        answers = [answers[i]+tmp_answers[i] for i in range(len(answers))]
+        is_th=False        
+        if countthai(inputs)>0:
+            is_th=True
+
+
+        sents, answers = self._extract_answers(inputs,is_th)
+        _,ner_answers =self._extract_answers_ner(inputs,is_th)
+        answers = [answers[i]+ner_answers[i] for i in range(len(answers))]
+
         if self.qg_format == "prepend":
             qg_examples = self._prepare_inputs_for_qg_from_answers_prepend(inputs, answers)
         else:
@@ -96,14 +104,17 @@ class QGPipeline:
         questions=[]
         bs=10
         for i in range(0,len(qg_inputs)//bs + (1 if len(qg_inputs)%bs else 0)):
-            tmp_questions = self._generate_questions(qg_inputs[i*bs:(i+1)*bs],generate_mode,num_question)
+            tmp_questions = self._generate_questions(qg_inputs[i*bs:(i+1)*bs],generate_mode,is_th,num_question)
             questions+=tmp_questions
-        #questions = self._generate_questions(qg_inputs,generate_mode)
         output = [{'answer': example['answer'], 'question': [q.strip() for q in que]} for example, que in zip(qg_examples, questions)]
         return output
     
-    def generate_question_from_context_and_answer_prepend(self, context,answers,generate_mode,num_question=3,diversity_penalty=3.0):
+    def generate_question_from_context_and_answer_prepend(self, context,answers,generate_mode="tmp_diverse_beam_search",num_question=3):
         
+        is_th=False        
+        if countthai(context)>0:
+            is_th=True
+
         qg_examples = self._prepare_inputs_for_qg_from_answers_prepend(context, answers)
         qg_inputs = [example['source_text'] for example in qg_examples]
         questions=[]
@@ -112,12 +123,12 @@ class QGPipeline:
             bs=1
         for i in range(0,len(qg_inputs)//bs + (1 if len(qg_inputs)%bs else 0)):
             
-            tmp_questions = self._generate_questions(qg_inputs[i*bs:(i+1)*bs],generate_mode,num_question,diversity_penalty)
+            tmp_questions = self._generate_questions(qg_inputs[i*bs:(i+1)*bs],generate_mode,is_th,num_question)
             questions+=tmp_questions
         output = [{'answer': example['answer'], 'question': [q.strip() for q in que]} for example, que in zip(qg_examples, questions)]
         return output
 
-    def deduplicate_question(self,question_list,num_question):
+    def deduplicate_question(self,context,answer,question_list,num_question,is_th):
         q_set = set()
         new_q = []
         for que in question_list:
@@ -130,29 +141,27 @@ class QGPipeline:
             q_set.add(tmp_que)
             new_q.append(que)
         
-        return new_q[:num_question]
+        scored_question=get_ranking_score(context,question_list,answer,is_th)
+
+        return [q for s,q in scored_question[:num_question]]
 
     def flatten(self,nested_list):
   
         nested_list = reduce(lambda x,y: x+y, nested_list)
         return nested_list
 
-    def _generate_questions(self, inputs,generate_mode,num_question=3,diversity_penalty=3.0):
+    def _generate_questions(self, inputs,generate_mode,is_th,num_question=3):
+        inputs_answers=[]
+        for inp in inputs:
+          answer_start=inp.find("answer: ")+8
+          answer_end=inp.find("context: ")
+          inputs_answers.append(inp[answer_start:answer_end])
+        inputs_context=inputs[0][inputs[0].find("context: ")+9:]
         inputs = self._tokenize(inputs, padding=True, truncation=True)
 
         num_over_generated = num_question*3
 
-        if generate_mode =="augment":
-            outs = self.model.generate(
-                input_ids=inputs['input_ids'].to(self.device), 
-                attention_mask=inputs['attention_mask'].to(self.device), 
-                max_length=64,
-                num_beams=12,
-
-            )
-            questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
-            questions = [que.split("<sep>") for que in questions]
-        elif generate_mode =="no_repeat_ngram":
+        if generate_mode =="no_repeat_ngram":
             outs = self.model.generate(
                 input_ids=inputs['input_ids'].to(self.device), 
                 attention_mask=inputs['attention_mask'].to(self.device), 
@@ -183,8 +192,7 @@ class QGPipeline:
                 # num_beams=max(12,num_over_generated if num_over_generated%2==0 else num_over_generated+1),
                 num_beams=max(12,num_over_generated),
                 num_beam_groups=3,
-                diversity_penalty=diversity_penalty,
-                # diversity_penalty=3.5,
+                diversity_penalty=3.0,
                 num_return_sequences=num_over_generated
             )
             questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
@@ -199,8 +207,7 @@ class QGPipeline:
                 # num_beams=max(12,num_over_generated if num_over_generated%2==0 else num_over_generated+1),
                 num_beams=max(12,num_over_generated),
                 num_beam_groups=2,
-                diversity_penalty=diversity_penalty,
-                # diversity_penalty=3.5,
+                diversity_penalty=3.0,
                 num_return_sequences=num_over_generated
             )
             questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
@@ -220,40 +227,6 @@ class QGPipeline:
             
             questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
             questions = [questions[i:i+num_over_generated] for i in range(0,len(questions),num_over_generated)]
-        elif generate_mode =="no_repeat_ngram_sample":
-            tf.random.set_seed(42)
-            set_seed(42)
-            outs = self.model.generate(
-                input_ids=inputs['input_ids'].to(self.device), 
-                attention_mask=inputs['attention_mask'].to(self.device), 
-                max_length=64,
-                do_sample=True,
-                top_k=5, 
-                temperature=1.0,
-                repetition_penalty=1.05,
-                no_repeat_ngram_size=9,
-                num_return_sequences=num_question
-            )
-            questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
-
-            questions = [que.split("<sep>") for que in questions]
-            questions = [self.flatten(questions[i:i+num_question]) for i in range(0,len(questions),num_question)]
-        elif generate_mode =="no_repeat_ngram_diverse_beam_search":
-            outs = self.model.generate(
-                input_ids=inputs['input_ids'].to(self.device), 
-                attention_mask=inputs['attention_mask'].to(self.device), 
-                max_length=64,
-                num_beams=num_question,
-                repetition_penalty=2.0,
-                no_repeat_ngram_size=7,
-                num_beam_groups=num_question,
-                diversity_penalty=diversity_penalty,
-                num_return_sequences=num_question
-            )
-            questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
-
-            questions = [que.split("<sep>") for que in questions]
-            questions = [self.flatten(questions[i:i+num_question]) for i in range(0,len(questions),num_question)]
         else:
             outs = self.model.generate(
                 input_ids=inputs['input_ids'].to(self.device), 
@@ -263,11 +236,11 @@ class QGPipeline:
             )
             questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
             questions = [que.split("<sep>") for que in questions]
-        questions=[self.deduplicate_question(que,num_question) for que in questions]
+        questions=[self.deduplicate_question(inputs_context,inputs_answers[i],que,num_question,is_th) for i,que in enumerate(questions)]
         return questions
     
-    def _extract_answers(self, context):
-        sents, inputs = self._prepare_inputs_for_ans_extraction(context)
+    def _extract_answers(self, context,is_th):
+        sents, inputs = self._prepare_inputs_for_ans_extraction(context,is_th)
         bs=32
         
         real_answers=[]
@@ -288,38 +261,12 @@ class QGPipeline:
         
         return sents, answers
     
-    def wangchan_ner_result_to_extracted_answer(self,result,original_text):
-        new_result = [x for x in result if x["entity_group"]!="O"]
-
-        entities = []
-        tmp_entity = ""
-        for elem in new_result:
-            if elem["entity_group"][0]=="B" or elem["entity_group"][0]=="O":
-                if tmp_entity!="":
-                    entities+=[tmp_entity]
-                    tmp_entity=elem["word"].strip() if elem["word"] in original_text else (elem["word"][0].upper()+elem["word"][1:]).strip()
-                else:
-                    tmp_entity+=elem["word"]
-            else :
-                tmp_entity+=elem["word"]
-
-        if tmp_entity!="":
-            entities+=[tmp_entity]
-
-        entities = [entity.replace(" ","").replace("<_>"," ")  for entity in entities ]
-        entities = [entity.strip() if entity in original_text else (entity[0].upper()+entity[1:]).strip() for entity in entities ]
-            
-        return entities
-
-    def preprocess_for_wangchan(self,text):
-        return "".join(word_tokenize(text.lower().replace(" ","<_>")))
-
     def get_th_ner(self,sentence):
-        return self.wangchan_ner_result_to_extracted_answer(self.th_ner_pipeline(self.preprocess_for_wangchan(sentence)),sentence)
+        return wangchan_ner_result_to_extracted_answer(self.th_ner_pipeline(preprocess_for_wangchan(sentence)),sentence)
 
-    def _extract_answers_ner(self, context):
+    def _extract_answers_ner(self, context,is_th):
         answers = []
-        if countthai(context)>0:
+        if is_th:
             sents = sent_tokenize(context)
             for sent in sents:
                 answers.append(self.get_th_ner(sent))
@@ -349,8 +296,8 @@ class QGPipeline:
         )
         return inputs
     
-    def _prepare_inputs_for_ans_extraction(self, text):
-        if countthai(text)>0:
+    def _prepare_inputs_for_ans_extraction(self, text, is_th):
+        if is_th:
             sents = sent_tokenize(text)
         else :
             sents = en_sent_tokenize(text)
@@ -420,7 +367,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
                 return self.question_answering(inputs["question"], inputs["context"])
             else :
               if "num_question" in inputs:
-                return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],inputs["generate_mode"],inputs["num_question"],inputs["diversity_penalty"])
+                return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],inputs["generate_mode"],inputs["num_question"])
               else:
                 return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],inputs["generate_mode"],3)
     
