@@ -19,7 +19,7 @@ class DataTrainingArguments:
     task: str = field(
         metadata={"help": "Which task 'qa', 'qg', 'e2e_qg', 'ans_ext', 'multi'. 'multi' means 'qa', 'qg', 'ans_ext' tasks"}, 
     )
-    model_type: str = field(metadata={"help": "One of 't5', 'bart', 'mt5','mbart'"})
+    model_type: str = field(metadata={"help": "One of 't5', 'bart', 'mt5','mt5-small','mbart'"})
     dataset_path: Optional[str] = field(
         default="data/squad_multitask",
         metadata={"help": "Path for dataset directory"}, 
@@ -61,6 +61,8 @@ class DataProcessor:
             self.sep_token = "<sep>"
         elif model_type == "mt5":
             self.sep_token = "<sep>"
+        elif model_type == "mt5-small":
+            self.sep_token = "<sep>"
         elif model_type == "bart":
             self.sep_token = "<sep>"
         elif model_type == "mbart":
@@ -72,6 +74,8 @@ class DataProcessor:
         if self.model_type == "t5":
             dataset = dataset.map(self._add_eos_examples)
         elif self.model_type == "mt5":
+            dataset = dataset.map(self._add_eos_examples)
+        elif self.model_type == "mt5-small":
             dataset = dataset.map(self._add_eos_examples)
         
         dataset = dataset.map(self._add_special_tokens)
@@ -155,6 +159,8 @@ def main():
         tokenizer = T5Tokenizer.from_pretrained("t5-base")
     elif data_args.model_type == 'mt5':
         tokenizer = T5Tokenizer.from_pretrained("google/mt5-base")
+    elif data_args.model_type == 'mt5-small':
+        tokenizer = T5Tokenizer.from_pretrained("google/mt5-small")
     elif data_args.model_type == 'mbart':
         tokenizer = MBartTokenizer.from_pretrained("facebook/mbart-large-50")
     else:

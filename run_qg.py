@@ -28,6 +28,7 @@ from utils import freeze_embeds, assert_not_all_frozen
 MODEL_TYPE_TO_TOKENIZER = {
     "t5": T5Tokenizer,
     "mt5": T5Tokenizer,
+    "mt5-small":T5Tokenizer,
     "mbart": MBartTokenizer,
     "bart": BartTokenizer,
 }
@@ -45,7 +46,7 @@ class ModelArguments:
     model_name_or_path: str = field(
         metadata={"help": "Path to pretrained model or model identifier from huggingface.co/models"}
     )
-    model_type: str = field(metadata={"help": "One of 't5', 'bart', 'mt5', 'mbart'"})
+    model_type: str = field(metadata={"help": "One of 't5', 'bart', 'mt5','mt5-small', 'mbart'"})
     tokenizer_name_or_path: Optional[str] = field(
         default=None, metadata={"help": "Pretrained tokenizer name or path if not the same as model_name"}
     )
@@ -109,7 +110,7 @@ def main(args_file=None):
     else:
         model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    assert model_args.model_type in list(MODEL_TYPE_TO_TOKENIZER.keys()), "model type should be 't5', 'bart', 'mt5', or 'mbart'" 
+    assert model_args.model_type in list(MODEL_TYPE_TO_TOKENIZER.keys()), "model type should be 't5', 'bart', 'mt5','mt5-small' or 'mbart'" 
 
     training_args.save_steps=2400
     if (
