@@ -94,7 +94,8 @@ class QGPipeline:
 
         sents, answers = self._extract_answers(inputs,is_th)
         _,ner_answers =self._extract_answers_ner(inputs,is_th)
-        answers = [answers[i]+ner_answers[i] for i in range(len(answers))]
+        
+        answers = [self.filter_answer(inputs,answers[i]+ner_answers[i]) for i in range(len(answers))]
 
         if self.qg_format == "prepend":
             qg_examples = self._prepare_inputs_for_qg_from_answers_prepend(inputs, answers)
@@ -109,6 +110,9 @@ class QGPipeline:
         output = [{'answer': example['answer'], 'question': [q.strip() for q in que]} for example, que in zip(qg_examples, questions)]
         return output
     
+    def filter_answer(self,context,ans_list):
+        return [ans for ans in ans_list if ans in context]
+
     def generate_question_from_context_and_answer_prepend(self, context,answers,generate_mode="tmp_diverse_beam_search",num_question=3):
         
         is_th=False        
@@ -141,7 +145,9 @@ class QGPipeline:
             q_set.add(tmp_que)
             new_q.append(que)
         scored_question=get_ranking_score(context,new_q,answer,is_th)
-        return [q for s,q in sorted(scored_question)[::-1][:num_question]]
+        if is_th :
+            return [q for s,q in sorted(scored_question)[::-1][:num_question]]
+        return new_q[:num_question]
 
     def flatten(self,nested_list):
   
