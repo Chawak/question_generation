@@ -15,6 +15,7 @@ from transformers import(
     set_seed,
     pipeline as ner_pipeline
 )
+import numpy as np
 from flair.data import Sentence
 from flair.models import SequenceTagger
 from ner_utils import wangchan_ner_result_to_extracted_answer, preprocess_for_wangchan
@@ -80,7 +81,7 @@ class QGPipeline:
         else:
             self.model_type = "bart"
 
-    def __call__(self, inputs: str,generate_mode="tmp_diverse_beam_search",num_question=3):
+    def __call__(self, inputs: str,generate_mode="diverse_beam_search",num_question=3,generate_batch_size=5):
         inputs = " ".join(inputs.split())
         
         is_th=False        
@@ -103,17 +104,19 @@ class QGPipeline:
             qg_examples = self._prepare_inputs_for_qg_from_answers_hl(sents, answers)
         qg_inputs = [example['source_text'] for example in qg_examples]
         questions=[]
-        bs=8
+        bs=generate_batch_size
         for i in range(0,len(qg_inputs)//bs + (1 if len(qg_inputs)%bs else 0)):
             tmp_questions = self._generate_questions(qg_inputs[i*bs:(i+1)*bs],generate_mode,is_th,num_question)
             questions+=tmp_questions
-        output = [{'answer': example['answer'], 'question': [q.strip() for q in que]} for example, que in zip(qg_examples, questions)]
+        
+        output = [{'answer': example['answer'], 'question': [q.strip() for q in que[0]],"prob_score":[q for q in que[1]]} for example, que in zip(qg_examples, questions)]
+
         return output
     
     def filter_answer(self,context,ans_list):
         return [ans for ans in ans_list if ans in context]
 
-    def generate_question_from_context_and_answer_prepend(self, context,answers,generate_mode="tmp_diverse_beam_search",num_question=3):
+    def generate_question_from_context_and_answer_prepend(self, context,answers,generate_mode="diverse_beam_search",num_question=3,generate_batch_size=5):
         
         is_th=False        
         if countthai(context)>0:
@@ -122,20 +125,22 @@ class QGPipeline:
         qg_examples = self._prepare_inputs_for_qg_from_answers_prepend(context, answers)
         qg_inputs = [example['source_text'] for example in qg_examples]
         questions=[]
-        bs=8
-        if generate_mode=="sample" or generate_mode=="no_repeat_ngram_sample":
+        bs=generate_batch_size
+        if generate_mode=="sample" :
             bs=1
         for i in range(0,len(qg_inputs)//bs + (1 if len(qg_inputs)%bs else 0)):
             
             tmp_questions = self._generate_questions(qg_inputs[i*bs:(i+1)*bs],generate_mode,is_th,num_question)
             questions+=tmp_questions
-        output = [{'answer': example['answer'], 'question': [q.strip() for q in que]} for example, que in zip(qg_examples, questions)]
+        output = [{'answer': example['answer'], 'question': [q.strip() for q in que[0]],"prob_score":[q for q in que[1]]} for example, que in zip(qg_examples, questions)]
+
         return output
 
-    def deduplicate_question(self,context,answer,question_list,num_question,is_th):
+    def deduplicate_question(self,context,answer,question_list,prob_list,num_question,is_th):
         q_set = set()
         new_q = []
-        for que in question_list:
+        new_score = []
+        for i,que in enumerate(question_list):
           tmp_que = que.replace(" ","")
           if tmp_que=="":
             continue
@@ -144,10 +149,15 @@ class QGPipeline:
           if tmp_que not in q_set:
             q_set.add(tmp_que)
             new_q.append(que)
+            new_score.append(prob_list[i])
+        
         scored_question=get_ranking_score(context,new_q,answer,is_th)
+        
         if is_th :
-            return [q for s,q in sorted(scored_question)[::-1][:num_question]]
-        return new_q[:num_question]
+            ans=[q for s,q in sorted(scored_question)[::-1][:num_question]]
+            return ans,[np.e**(new_score[new_q.index(q)]) for q in ans]
+        
+        return new_q[:num_question],[np.e**(s) for s in new_score[:num_question]]
 
     def flatten(self,nested_list):
   
@@ -164,8 +174,8 @@ class QGPipeline:
         inputs = self._tokenize(inputs, padding=True, truncation=True)
 
         num_over_generated = num_question*3
-
-        if generate_mode =="no_repeat_ngram":
+        prob_score=[[0]*num_over_generated]
+        if generate_mode =="augmented":
             outs = self.model.generate(
                 input_ids=inputs['input_ids'].to(self.device), 
                 attention_mask=inputs['attention_mask'].to(self.device), 
@@ -174,34 +184,29 @@ class QGPipeline:
                 repetition_penalty=2.0,
                 no_repeat_ngram_size=7
             )
+            prob_score=[[0]]*num_over_generated
             questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
             questions = [que.split("<sep>") for que in questions]
 
-        elif generate_mode=="num_return_sequence":
+        elif generate_mode=="top_n_sequence":
             outs = self.model.generate(
                 input_ids=inputs['input_ids'].to(self.device), 
                 attention_mask=inputs['attention_mask'].to(self.device), 
                 max_length=96,
                 num_beams=12,
-                num_return_sequences=num_over_generated
+                num_return_sequences=num_over_generated,
+                output_scores=True,
+                return_dict_in_generate=True
             )
             
+            prob_score=outs.sequences_scores.tolist()
+            outs=outs.sequences
             questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
+            
             questions = [questions[i:i+num_over_generated] for i in range(0,len(questions),num_over_generated)]
+            prob_score = [prob_score[i:i+num_over_generated] for i in range(0,len(prob_score),num_over_generated)]
+
         elif generate_mode=="diverse_beam_search":
-            outs = self.model.generate(
-                input_ids=inputs['input_ids'].to(self.device), 
-                attention_mask=inputs['attention_mask'].to(self.device), 
-                max_length=64,
-                # num_beams=max(12,num_over_generated if num_over_generated%2==0 else num_over_generated+1),
-                num_beams=max(12,num_over_generated),
-                num_beam_groups=3,
-                diversity_penalty=3.0,
-                num_return_sequences=num_over_generated
-            )
-            questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
-            questions = [questions[i:i+num_over_generated] for i in range(0,len(questions),num_over_generated)]
-        elif generate_mode=="tmp_diverse_beam_search":
             if num_over_generated%2==1:
                 num_over_generated+=1
             outs = self.model.generate(
@@ -212,10 +217,17 @@ class QGPipeline:
                 num_beams=max(12,num_over_generated),
                 num_beam_groups=2,
                 diversity_penalty=3.0,
-                num_return_sequences=num_over_generated
+                num_return_sequences=num_over_generated,
+                output_scores=True,
+                return_dict_in_generate=True
             )
+            prob_score=outs.sequences_scores.tolist()
+            outs=outs.sequences
             questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
+            
             questions = [questions[i:i+num_over_generated] for i in range(0,len(questions),num_over_generated)]
+            prob_score = [prob_score[i:i+num_over_generated] for i in range(0,len(prob_score),num_over_generated)]
+            
         elif generate_mode=="sample": 
             tf.random.set_seed(42)
             set_seed(42)
@@ -226,9 +238,9 @@ class QGPipeline:
                 do_sample=True,
                 top_k=5, 
                 temperature=1.20,
-                num_return_sequences=num_over_generated
+                num_return_sequences=num_over_generated,
             )
-            
+
             questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
             questions = [questions[i:i+num_over_generated] for i in range(0,len(questions),num_over_generated)]
         else:
@@ -237,10 +249,19 @@ class QGPipeline:
                 attention_mask=inputs['attention_mask'].to(self.device), 
                 max_length=64,
                 num_beams=4,
+                output_scores=True,
+                return_dict_in_generate=True
             )
+            prob_score=outs.sequences_scores.tolist()
+            outs=outs.sequences
             questions = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in outs]
+
             questions = [que.split("<sep>") for que in questions]
-        questions=[self.deduplicate_question(inputs_context,inputs_answers[i],que,num_question,is_th) for i,que in enumerate(questions)]
+            prob_score = [[p] for p in prob_score]
+
+        questions=[self.deduplicate_question(inputs_context,inputs_answers[i],que,prob_score[i],num_question,is_th) for i,que in enumerate(questions)]
+        
+          
         return questions
     
     def _extract_answers(self, context,is_th):
@@ -362,19 +383,18 @@ class MultiTaskQAQGPipeline(QGPipeline):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
     
-    def __call__(self, inputs: Union[Dict, str],generate_mode="tmp_diverse_beam_search",num_question=3):
+    def __call__(self, inputs: Union[Dict, str],generate_mode="diverse_beam_search",num_question=3,generate_batch_size=5):
         if type(inputs) is str:
             # do qg
-            return super().__call__(inputs,generate_mode,num_question)
+            return super().__call__(inputs,generate_mode,num_question,generate_batch_size)
         else:
             # do qa
+            
             if inputs["task"]=="qa":
                 return self.question_answering(inputs["question"], inputs["context"])
             else :
-              if "num_question" in inputs:
-                return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],inputs["generate_mode"],inputs["num_question"])
-              else:
-                return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],inputs["generate_mode"],3)
+                return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],generate_mode,num_question,generate_batch_size)
+            
     
     def _prepare_inputs_for_qa(self, question, context):
         source_text = f"question: {question}  context: {context}"
@@ -390,10 +410,14 @@ class MultiTaskQAQGPipeline(QGPipeline):
             input_ids=inputs['input_ids'].to(self.device), 
             attention_mask=inputs['attention_mask'].to(self.device), 
             max_length=16,
+            num_beams=4,
+            output_scores=True,
+            return_dict_in_generate=True
         )
-
+        prob_score=outs.sequences_scores.tolist()
+        outs=outs.sequences
         answer = self.tokenizer.decode(outs[0], skip_special_tokens=True)
-        return answer
+        return answer,np.e**prob_score[0]
 
 
 class E2EQGPipeline:
