@@ -418,8 +418,9 @@ class MultiTaskQAQGPipeline(QGPipeline):
         prob_score=outs.sequences_scores.tolist()
         outs=outs.sequences
         answer = self.tokenizer.decode(outs[0], skip_special_tokens=True)
-
-        answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2)
+        
+        if answer not in context:
+            answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)
         return answer,np.e**prob_score[0]
 
 
