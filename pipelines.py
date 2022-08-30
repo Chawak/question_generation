@@ -20,6 +20,7 @@ from flair.data import Sentence
 from flair.models import SequenceTagger
 from ner_utils import wangchan_ner_result_to_extracted_answer, preprocess_for_wangchan
 from ranking import get_ranking_score
+from pipelines_util import get_best_match_qa
 model_name = "wangchanberta-base-att-spm-uncased" 
 
 #create tokenizer
@@ -417,6 +418,8 @@ class MultiTaskQAQGPipeline(QGPipeline):
         prob_score=outs.sequences_scores.tolist()
         outs=outs.sequences
         answer = self.tokenizer.decode(outs[0], skip_special_tokens=True)
+
+        answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2)
         return answer,np.e**prob_score[0]
 
 
