@@ -1,6 +1,6 @@
 from difflib import SequenceMatcher
 
-def get_best_match_qa(query, corpus, step=4, flex=3, case_sensitive=False, verbose=False):
+def get_best_match_qa(query, corpus, step=4, flex=3, case_sensitive=False):
     """Return best matching substring of corpus.
 
     Parameters
@@ -32,10 +32,8 @@ def get_best_match_qa(query, corpus, step=4, flex=3, case_sensitive=False, verbo
         m = 0
         while m + qlen - step <= len(corpus):
             match_values.append(_match(query, corpus[m : m-1+qlen]))
-            if verbose:
-                print(query, "-", corpus[m: m + qlen], _match(query, corpus[m: m + qlen]))
+            
             m += step
-        print(match_values)
         return match_values
 
     def index_max(v):
@@ -73,13 +71,6 @@ def get_best_match_qa(query, corpus, step=4, flex=3, case_sensitive=False, verbo
             if rr > bmv_r:
                 bmv_r = rr
                 bp_r = p_r + f
-
-            if verbose:
-                print("\n" + str(f))
-                print("ll: -- value: %f -- snippet: %s" % (ll, corpus[p_l - f: p_r]))
-                print("lr: -- value: %f -- snippet: %s" % (lr, corpus[p_l + f: p_r]))
-                print("rl: -- value: %f -- snippet: %s" % (rl, corpus[p_l: p_r - f]))
-                print("rr: -- value: %f -- snippet: %s" % (rl, corpus[p_l: p_r + f]))
 
         return bp_l, bp_r, _match(query, corpus[bp_l : bp_r])
 
