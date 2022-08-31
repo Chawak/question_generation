@@ -419,8 +419,10 @@ class MultiTaskQAQGPipeline(QGPipeline):
         outs=outs.sequences
         answer = self.tokenizer.decode(outs[0], skip_special_tokens=True)
         
+        answer=answer.replace("ํา","ำ")
         if answer not in context and (answer!="ไม่มีคําตอบ" and answer!="ไม่มีคำตอบ"):
             answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)
+
         return answer,np.e**prob_score[0]
 
 
