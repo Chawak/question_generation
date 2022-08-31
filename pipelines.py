@@ -421,7 +421,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
         
         answer=answer.replace("ํา","ำ")
         if answer not in context and (answer!="ไม่มีคําตอบ" and answer!="ไม่มีคำตอบ"):
-            answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)
+            answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)[0]
 
         return answer,np.e**prob_score[0]
 
