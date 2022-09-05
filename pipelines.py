@@ -392,7 +392,9 @@ class MultiTaskQAQGPipeline(QGPipeline):
             # do qa
             
             if inputs["task"]=="qa":
-                return self.question_answering(inputs["question"], inputs["context"])
+                if "use_text_search" not in inputs:
+                    inputs["use_text_search"]=False
+                return self.question_answering(inputs["question"], inputs["context"],inputs["use_text_search"])
             else :
                 return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],generate_mode,num_question,generate_batch_size)
             
@@ -403,7 +405,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
             source_text = source_text + " </s>"
         return  source_text
     
-    def question_answering(self, question, context):
+    def question_answering(self, question, context,use_text_search):
         source_text = self._prepare_inputs_for_qa(question, context)
         inputs = self._tokenize([source_text], padding=False)
     
@@ -420,8 +422,9 @@ class MultiTaskQAQGPipeline(QGPipeline):
         answer = self.tokenizer.decode(outs[0], skip_special_tokens=True)
         
         answer=answer.replace("ํา","ำ")
-        if answer not in context and (answer!="ไม่มีคําตอบ" and answer!="ไม่มีคำตอบ"):
-            answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)[0]
+        if use_text_search:
+            if answer not in context and (answer!="ไม่มีคําตอบ" and answer!="ไม่มีคำตอบ"):
+                answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)[0]
 
         return answer,np.e**prob_score[0]
 
