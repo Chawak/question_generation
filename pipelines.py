@@ -20,7 +20,7 @@ from flair.data import Sentence
 from flair.models import SequenceTagger
 from ner_utils import wangchan_ner_result_to_extracted_answer, preprocess_for_wangchan
 from ranking import get_ranking_score
-from pipelines_util import get_best_match_qa
+from pipelines_util import get_best_match_qa,AD_BE_convert,add_unit_to_answer
 model_name = "wangchanberta-base-att-spm-uncased" 
 
 #create tokenizer
@@ -422,7 +422,10 @@ class MultiTaskQAQGPipeline(QGPipeline):
         answer = self.tokenizer.decode(outs[0], skip_special_tokens=True)
         
         answer=answer.replace("ํา","ำ")
+        answer = add_unit_to_answer(AD_BE_convert(answer))
         if use_text_search:
+            
+
             if answer not in context and (answer!="ไม่มีคําตอบ" and answer!="ไม่มีคำตอบ"):
                 answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)[0]
 

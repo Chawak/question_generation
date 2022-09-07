@@ -1,4 +1,39 @@
 from difflib import SequenceMatcher
+import re
+from pythainlp.tokenize import word_tokenize
+from nltk import word_tokenize as en_word_tokenize
+
+def AD_BE_convert(context,answer):
+    all_match=[(m.start(0), m.end(0)) for m in re.finditer("[0-9]+",answer)]
+    for start,end in all_match[::-1]:
+        if answer[start:end] not in context :
+            if str(int(answer[start:end])+543) in context:
+                answer = answer[:start]+str(int(answer[start:end])+543)+answer[end:]
+            elif str(int(answer[start:end])-543) in context:
+                answer = answer[:start]+str(int(answer[start:end])-543)+answer[end:]
+    return answer
+
+
+def add_unit_to_answer(context,answer,question):
+    if context.count(answer)>1 and re.search("[0-9]+$",answer):
+        if "กี่" in question:
+            tokenize_question = word_tokenize(question)
+            try :
+                start_idx = tokenize_question.index("กี่")
+                answer+=tokenize_question[start_idx+1]
+                return answer
+            except:
+                pass
+        
+        for clause in ["how many","how much"]:
+            if clause in question.lower():
+                tokenize_question = en_word_tokenize(question)
+                for i in range(2,len(tokenize_question)):
+                    if tokenize_question[i-2].lower()=="how" and tokenize_question[i-1].lower()==clause.split()[1]:
+                        tmp_answer = answer+" "+tokenize_question[i]
+                        if context.count(tmp_answer)==1:
+                            return tmp_answer
+    return answer
 
 def get_best_match_qa(query, corpus, step=4, flex=3, case_sensitive=False):
     """Return best matching substring of corpus.
@@ -21,6 +56,9 @@ def get_best_match_qa(query, corpus, step=4, flex=3, case_sensitive=False):
     output1 : float
         Match ratio of best matching substring. 1 is perfect match.
     """
+    if query in corpus :
+        return (query,1.0)
+ 
     def _match(a, b):
         """Compact alias for SequenceMatcher."""
         return SequenceMatcher(None, a, b).ratio()
@@ -31,8 +69,7 @@ def get_best_match_qa(query, corpus, step=4, flex=3, case_sensitive=False):
 
         m = 0
         while m + qlen - step <= len(corpus):
-            match_values.append(_match(query, corpus[m : m-1+qlen]))
-            
+            match_values.append(_match(query, corpus[m : m+qlen]))
             m += step
         return match_values
 
@@ -80,13 +117,14 @@ def get_best_match_qa(query, corpus, step=4, flex=3, case_sensitive=False):
 
     qlen = len(query)
 
-    if flex >= qlen/2:
-        print("Warning: flex exceeds length of query / 2. Setting to default.")
-        flex = 3
+    # if flex >= qlen/2:
+    #     print("Warning: flex exceeds length of query / 2. Setting to default.")
+    #     flex = 3
 
     match_values = scan_corpus(step)
     pos = index_max(match_values) * step
     pos_left, pos_right, match_value = adjust_left_right_positions()
 
     return corpus[pos_left: pos_right].strip(), match_value
+
 
