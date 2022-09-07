@@ -1,6 +1,7 @@
 from difflib import SequenceMatcher
 import re
 from pythainlp.tokenize import word_tokenize
+from pythainlp.tag import pos_tag
 from nltk import word_tokenize as en_word_tokenize
 
 def AD_BE_convert(context,answer):
@@ -24,7 +25,21 @@ def add_unit_to_answer(context,answer,question):
                 return answer
             except:
                 pass
-        
+
+        if any(map(question.__contains__, ["เท่าไหร่" , "เท่าใด" ,"แค่ไหน" ,"เท่าไร"])) :
+          tokenize_context = word_tokenize(context)
+          pos_context = pos_tag(tokenize_context)
+
+          try :
+                start_idx = tokenize_context.index(answer)
+
+                for tag_idx in range(start_idx+1,min(start_idx + 3,len(pos_context))) :
+                  if pos_context[tag_idx][1]=="CMTR":
+                    answer+=pos_context[tag_idx][0]
+                    return answer
+          except:
+              pass
+
         for clause in ["how many","how much"]:
             if clause in question.lower():
                 tokenize_question = en_word_tokenize(question)
