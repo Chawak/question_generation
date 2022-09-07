@@ -422,7 +422,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
         answer = self.tokenizer.decode(outs[0], skip_special_tokens=True)
         
         answer=answer.replace("ํา","ำ")
-        answer = add_unit_to_answer(AD_BE_convert(answer))
+        answer = add_unit_to_answer(context,AD_BE_convert(context,answer),question)
         if use_text_search:
             
 
