@@ -141,5 +141,3 @@ def get_best_match_qa(query, corpus, step=4, flex=3, case_sensitive=False):
     pos_left, pos_right, match_value = adjust_left_right_positions()
 
     return corpus[pos_left: pos_right].strip(), match_value
-
-
