@@ -422,10 +422,10 @@ class MultiTaskQAQGPipeline(QGPipeline):
         answer = self.tokenizer.decode(outs[0], skip_special_tokens=True)
         
         answer=answer.replace("ํา","ำ")
-        answer = add_unit_to_answer(context,AD_BE_convert(context,answer),question)
+        
         if use_text_search:
             
-
+            answer = add_unit_to_answer(context,AD_BE_convert(context,answer),question)
             if answer not in context and (answer!="ไม่มีคําตอบ" and answer!="ไม่มีคำตอบ"):
                 answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)[0]
 
