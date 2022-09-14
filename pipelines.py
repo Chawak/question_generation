@@ -20,7 +20,12 @@ from flair.data import Sentence
 from flair.models import SequenceTagger
 from ner_utils import wangchan_ner_result_to_extracted_answer, preprocess_for_wangchan
 from ranking import get_ranking_score
-from pipelines_util import get_best_match_qa,AD_BE_convert,add_unit_to_answer
+from pipelines_util import (
+    get_best_match_qa,
+    AD_BE_convert,
+    add_unit_to_answer,
+    create_custom_tokenizer,
+    spell_correct)
 model_name = "wangchanberta-base-att-spm-uncased" 
 
 #create tokenizer
@@ -54,6 +59,8 @@ class QGPipeline:
             grouped_entities=True)
         
         self.en_ner_pipeline = SequenceTagger.load("flair/ner-english-ontonotes-large")
+
+        self.corrector_tokenizer ,self.corrector_dict = create_custom_tokenizer()
 
         self.model = model
         self.model.eval()
@@ -394,7 +401,9 @@ class MultiTaskQAQGPipeline(QGPipeline):
             if inputs["task"]=="qa":
                 if "use_text_search" not in inputs:
                     inputs["use_text_search"]=False
-                return self.question_answering(inputs["question"], inputs["context"],inputs["use_text_search"])
+                if "correct_before_pred" not in inputs:
+                    inputs["correct_before_pred"]=True
+                return self.question_answering(inputs["question"], inputs["context"],inputs["use_text_search"],inputs["correct_before_pred"])
             else :
                 return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],generate_mode,num_question,generate_batch_size)
             
@@ -405,7 +414,12 @@ class MultiTaskQAQGPipeline(QGPipeline):
             source_text = source_text + " </s>"
         return  source_text
     
-    def question_answering(self, question, context,use_text_search):
+    def question_answering(self, question, context, use_text_search, correct_before_pred):
+
+        if correct_before_pred:
+            question=spell_correct(question)
+            context=spell_correct(context)
+
         source_text = self._prepare_inputs_for_qa(question, context)
         inputs = self._tokenize([source_text], padding=False)
     

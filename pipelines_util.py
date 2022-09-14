@@ -1,8 +1,13 @@
 from difflib import SequenceMatcher
 import re
-from pythainlp.tokenize import word_tokenize
+from pythainlp.tokenize import word_tokenize ,sent_tokenize ,Tokenizer
 from pythainlp.tag import pos_tag
+from pythainlp.spell import correct_sent
+from pythainlp.corpus import thai_words
+import pandas as pd
 from nltk import word_tokenize as en_word_tokenize
+from nltk import sent_tokenize as en_sent_tokenize
+
 
 def AD_BE_convert(context,answer):
     all_match=[(m.start(0), m.end(0)) for m in re.finditer("[0-9]+",answer)]
@@ -141,3 +146,35 @@ def get_best_match_qa(query, corpus, step=4, flex=3, case_sensitive=False):
     pos_left, pos_right, match_value = adjust_left_right_positions()
 
     return corpus[pos_left: pos_right].strip(), match_value
+
+
+def create_custom_tokenizer():
+    
+    new_thai_words=set(thai_words())
+    correct_dict={}
+    try :
+        correct_csv=pd.read_csv("correct_dict.csv")
+        new_thai_words=new_thai_words.union(correct_csv["wrong"],correct_csv["correct"])
+        correct_dict={w:c for w,c in zip(correct_csv["wrong"],correct_csv["correct"])}
+        
+    except:
+        pass
+    _tokenizer = Tokenizer(custom_dict=list(new_thai_words), engine='newmm')
+
+    return _tokenizer,correct_dict
+
+def spell_correct(text,word_tokenizer,correct_dict):
+
+    all_thai_words = set(thai_words())
+    
+    tokenized_text=word_tokenizer.word_tokenize(text)
+
+    for i in range(len(tokenized_text)):
+        if tokenized_text[i] not in all_thai_words:
+            if tokenized_text[i] in correct_dict:
+                tokenized_text[i]= correct_dict[tokenized_text[i]]
+
+    return "".join(tokenized_text)
+
+
+
