@@ -417,8 +417,8 @@ class MultiTaskQAQGPipeline(QGPipeline):
     def question_answering(self, question, context, use_text_search, correct_before_pred):
 
         if correct_before_pred:
-            question=spell_correct(question)
-            context=spell_correct(context)
+            question=spell_correct(question,self.corrector_tokenizer,self.corrector_dict)
+            context=spell_correct(context,self.corrector_tokenizer,self.corrector_dict)
 
         source_text = self._prepare_inputs_for_qa(question, context)
         inputs = self._tokenize([source_text], padding=False)
