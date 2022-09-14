@@ -153,8 +153,8 @@ def create_custom_tokenizer():
     new_thai_words=set(thai_words())
     correct_dict={}
     try :
-        correct_csv=pd.read_csv("correct_dict.csv")
-        new_thai_words=new_thai_words.union(correct_csv["wrong"],correct_csv["correct"])
+        correct_csv=pd.read_csv("corrector_dict.csv")
+        new_thai_words=new_thai_words.union(set(correct_csv["wrong"]),set(correct_csv["correct"]))
         correct_dict={w:c for w,c in zip(correct_csv["wrong"],correct_csv["correct"])}
         
     except:
