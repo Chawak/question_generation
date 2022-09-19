@@ -399,6 +399,11 @@ class MultiTaskQAQGPipeline(QGPipeline):
             # do qa
             
             if inputs["task"]=="qa":
+                
+                if "use_threshold" not in inputs:
+                    inputs["use_threshold"]=False
+                if "threshold" not in inputs:
+                    inputs["threshold"]=0.96
                 if "use_text_search" not in inputs:
                     inputs["use_text_search"]=False
                 if "correct_before_pred" not in inputs:
@@ -414,7 +419,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
             source_text = source_text + " </s>"
         return  source_text
     
-    def question_answering(self, question, context, use_text_search, correct_before_pred):
+    def question_answering(self, question, context, use_text_search, correct_before_pred, use_threshold,threshold):
 
         if correct_before_pred:
             question=spell_correct(question,self.corrector_tokenizer,self.corrector_dict)
@@ -429,21 +434,31 @@ class MultiTaskQAQGPipeline(QGPipeline):
             max_length=16,
             num_beams=4,
             output_scores=True,
-            return_dict_in_generate=True
+            return_dict_in_generate=True,
+            num_return_sequences=3
         )
+        
         prob_score=outs.sequences_scores.tolist()
+        
+        ans_prob_score=prob_score[0]
         outs=outs.sequences
         answer = self.tokenizer.decode(outs[0], skip_special_tokens=True)
         
         answer=answer.replace("ํา","ำ")
+
+        if use_threshold:
+            if answer=="ไม่มีคำตอบ" and prob_score<threshold:
+                answer=self.tokenizer.decode(outs[1], skip_special_tokens=True)
+                ans_prob_score=prob_score[1]
+
         
         if use_text_search:
             
             answer = add_unit_to_answer(context,AD_BE_convert(context,answer),question)
-            if answer not in context and (answer!="ไม่มีคําตอบ" and answer!="ไม่มีคำตอบ"):
+            if answer not in context and answer!="ไม่มีคำตอบ":
                 answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)[0]
 
-        return answer,np.e**prob_score[0]
+        return answer,np.e**ans_prob_score
 
 
 class E2EQGPipeline:
