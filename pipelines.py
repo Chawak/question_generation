@@ -408,7 +408,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
                     inputs["use_text_search"]=False
                 if "correct_before_pred" not in inputs:
                     inputs["correct_before_pred"]=True
-                return self.question_answering(inputs["question"], inputs["context"],inputs["use_text_search"],inputs["correct_before_pred"])
+                return self.question_answering(inputs["question"], inputs["context"],inputs["use_text_search"],inputs["correct_before_pred"],inputs["use_threshold"],inputs["threshold"])
             else :
                 return super().generate_question_from_context_and_answer_prepend(inputs["context"],inputs["answers"],generate_mode,num_question,generate_batch_size)
             
@@ -435,7 +435,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
             num_beams=4,
             output_scores=True,
             return_dict_in_generate=True,
-            num_return_sequences=3
+            num_return_sequences=2
         )
         
         prob_score=outs.sequences_scores.tolist()
@@ -447,7 +447,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
         answer=answer.replace("ํา","ำ")
 
         if use_threshold:
-            if answer=="ไม่มีคำตอบ" and prob_score<threshold:
+            if answer=="ไม่มีคำตอบ" and ans_prob_score<threshold:
                 answer=self.tokenizer.decode(outs[1], skip_special_tokens=True)
                 ans_prob_score=prob_score[1]
 
