@@ -27,7 +27,7 @@ from pipelines_util import (
     create_custom_tokenizer,
     spell_correct)
 from simpletransformers.question_answering import QuestionAnsweringModel, QuestionAnsweringArgs
-
+from tqdm import tqdm
 
 th_ner_model_name = "wangchanberta-base-att-spm-uncased" 
 
@@ -441,6 +441,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
 
         is_not_batch = type(question)==str
 
+        print("Tokenizing..")
         if is_not_batch:
             if correct_before_pred:
                 question=spell_correct(question,self.corrector_tokenizer,self.corrector_dict)
@@ -455,19 +456,26 @@ class MultiTaskQAQGPipeline(QGPipeline):
             source_text = [self._prepare_inputs_for_qa(q, c) for q,c in zip(question,context)]
             inputs = self._tokenize(source_text)
 
-        outs = self.model.generate(
-            input_ids=inputs['input_ids'].to(self.device), 
-            attention_mask=inputs['attention_mask'].to(self.device), 
-            max_length=16,
-            num_beams=4,
-            output_scores=True,
-            return_dict_in_generate=True,
-            num_return_sequences=2
-        )
+        print("Generating Output Seq..")
+        outs = []
+        prob_score=[]
+        for i in tqdm(range(len(inputs["input_ids"]))):
+          tmp_outs = self.model.generate(
+              input_ids=inputs['input_ids'][i].reshape(1,-1).to(self.device), 
+              attention_mask=inputs['attention_mask'][i].reshape(1,-1).to(self.device), 
+              max_length=16,
+              num_beams=4,
+              output_scores=True,
+              return_dict_in_generate=True,
+              num_return_sequences=2
+          )
 
-        prob_score=outs.sequences_scores.tolist()
-        outs=outs.sequences
         
+          prob_score+=tmp_outs.sequences_scores.tolist()
+          outs+=tmp_outs.sequences
+        
+        outs = torch.cat(outs,dim=0)
+
         answer_list = []
 
         for input_id in range(0,len(outs),2):
