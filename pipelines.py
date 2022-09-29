@@ -26,10 +26,13 @@ from pipelines_util import (
     add_unit_to_answer,
     create_custom_tokenizer,
     spell_correct)
-model_name = "wangchanberta-base-att-spm-uncased" 
+from simpletransformers.question_answering import QuestionAnsweringModel, QuestionAnsweringArgs
+
+
+th_ner_model_name = "wangchanberta-base-att-spm-uncased" 
 
 #create tokenizer
-dataset_name = "lst20"
+th_ner_dataset_name = "lst20"
 tf.random.set_seed(42)
 set_seed(42)
 logger = logging.getLogger(__name__)
@@ -43,40 +46,45 @@ class QGPipeline:
         ans_model: PreTrainedModel,
         ans_tokenizer: PreTrainedTokenizer,
         qg_format: str,
-        use_cuda: bool
+        use_cuda: bool,
+        only_qa_support :bool
     ):
-        
-        self.th_ner_tokenizer = AutoTokenizer.from_pretrained(
-                f'airesearch/{model_name}' ,
-                revision='main',
-                model_max_length=416,)
+        self.only_qa_support = only_qa_support
 
-        self.th_ner_pipeline =  ner_pipeline(task='ner',
-            tokenizer=self.th_ner_tokenizer,
-            model = f'airesearch/{model_name}' ,
-            revision = f'finetuned@{dataset_name}-ner',
-            ignore_labels=[], 
-            grouped_entities=True)
-        
-        self.en_ner_pipeline = SequenceTagger.load("flair/ner-english-ontonotes-large")
+        if not only_qa_support:
+            self.th_ner_tokenizer = AutoTokenizer.from_pretrained(
+                    f'airesearch/{th_ner_model_name}' ,
+                    revision='main',
+                    model_max_length=416,)
 
-        self.corrector_tokenizer ,self.corrector_dict = create_custom_tokenizer()
+            self.th_ner_pipeline =  ner_pipeline(task='ner',
+                tokenizer=self.th_ner_tokenizer,
+                model = f'airesearch/{th_ner_model_name}' ,
+                revision = f'finetuned@{th_ner_dataset_name}-ner',
+                ignore_labels=[], 
+                grouped_entities=True)
+        
+            self.en_ner_pipeline = SequenceTagger.load("flair/ner-english-ontonotes-large")
+
+            self.ans_model = ans_model
+            self.ans_model.eval()
+            self.ans_tokenizer = ans_tokenizer
+
+            if self.ans_model is not self.model:
+                self.ans_model.to(self.device)
+
+            self.qg_format = qg_format
+
+
+        self.corrector_tokenizer , self.corrector_dict = create_custom_tokenizer()
 
         self.model = model
         self.model.eval()
         self.tokenizer = tokenizer
 
-        self.ans_model = ans_model
-        self.ans_model.eval()
-        self.ans_tokenizer = ans_tokenizer
-
-        self.qg_format = qg_format
-
         self.device = "cuda" if torch.cuda.is_available() and use_cuda else "cpu"
         self.model.to(self.device)
 
-        if self.ans_model is not self.model:
-            self.ans_model.to(self.device)
 
         assert self.model.__class__.__name__ in ["T5ForConditionalGeneration", "BartForConditionalGeneration","MT5ForConditionalGeneration","MBartForConditionalGeneration"]
         
@@ -90,6 +98,12 @@ class QGPipeline:
             self.model_type = "bart"
 
     def __call__(self, inputs: str,generate_mode="diverse_beam_search",num_question=3,generate_batch_size=5):
+        
+        if self.only_qa_support:
+            print("This pipeline only support qa task. But you are trying to do qg task.")
+            print("Change pipeline 'pipeline('multitask-qa-qg')'")
+            return None
+
         inputs = " ".join(inputs.split())
         
         is_th=False        
@@ -126,6 +140,11 @@ class QGPipeline:
 
     def generate_question_from_context_and_answer_prepend(self, context,answers,generate_mode="diverse_beam_search",num_question=3,generate_batch_size=5):
         
+        if self.only_qa_support:
+            print("This pipeline only support qa task. But you are trying to do qg task.")
+            print("Change pipeline 'pipeline('multitask-qa-qg')'")
+            return None
+
         is_th=False        
         if countthai(context)>0:
             is_th=True
@@ -221,7 +240,6 @@ class QGPipeline:
                 input_ids=inputs['input_ids'].to(self.device), 
                 attention_mask=inputs['attention_mask'].to(self.device), 
                 max_length=64,
-                # num_beams=max(12,num_over_generated if num_over_generated%2==0 else num_over_generated+1),
                 num_beams=max(12,num_over_generated),
                 num_beam_groups=2,
                 diversity_penalty=3.0,
@@ -395,9 +413,9 @@ class MultiTaskQAQGPipeline(QGPipeline):
         if type(inputs) is str:
             # do qg
             return super().__call__(inputs,generate_mode,num_question,generate_batch_size)
+        
         else:
             # do qa
-            
             if inputs["task"]=="qa":
                 
                 if "use_threshold" not in inputs:
@@ -421,13 +439,22 @@ class MultiTaskQAQGPipeline(QGPipeline):
     
     def question_answering(self, question, context, use_text_search, correct_before_pred, use_threshold,threshold):
 
-        if correct_before_pred:
-            question=spell_correct(question,self.corrector_tokenizer,self.corrector_dict)
-            context=spell_correct(context,self.corrector_tokenizer,self.corrector_dict)
+        is_not_batch = type(question)==str
 
-        source_text = self._prepare_inputs_for_qa(question, context)
-        inputs = self._tokenize([source_text], padding=False)
-    
+        if is_not_batch:
+            if correct_before_pred:
+                question=spell_correct(question,self.corrector_tokenizer,self.corrector_dict)
+                context=spell_correct(context,self.corrector_tokenizer,self.corrector_dict)
+            source_text = self._prepare_inputs_for_qa(question, context)
+            inputs = self._tokenize([source_text], padding=False)
+            
+        else :
+            if correct_before_pred:
+                question=[spell_correct(q,self.corrector_tokenizer,self.corrector_dict) for q in question]
+                context=[spell_correct(c,self.corrector_tokenizer,self.corrector_dict) for c in context]
+            source_text = [self._prepare_inputs_for_qa(q, c) for q,c in zip(question,context)]
+            inputs = self._tokenize(source_text, padding=False)
+
         outs = self.model.generate(
             input_ids=inputs['input_ids'].to(self.device), 
             attention_mask=inputs['attention_mask'].to(self.device), 
@@ -437,29 +464,37 @@ class MultiTaskQAQGPipeline(QGPipeline):
             return_dict_in_generate=True,
             num_return_sequences=2
         )
-        
+
         prob_score=outs.sequences_scores.tolist()
-        
-        ans_prob_score=prob_score[0]
         outs=outs.sequences
-        answer = self.tokenizer.decode(outs[0], skip_special_tokens=True)
         
-        answer=answer.replace("ํา","ำ")
+        answer_list = []
 
-        if use_threshold:
-            if answer=="ไม่มีคำตอบ" and ans_prob_score<threshold:
-                answer=self.tokenizer.decode(outs[1], skip_special_tokens=True)
-                ans_prob_score=prob_score[1]
+        for input_id in range(0,len(outs),2):
+            ans_prob_score=prob_score[0]
 
-        
-        if use_text_search:
+            answer = self.tokenizer.decode(outs[input_id], skip_special_tokens=True)
             
-            answer = add_unit_to_answer(context,AD_BE_convert(context,answer),question)
-            if answer not in context and answer!="ไม่มีคำตอบ":
-                answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)[0]
+            answer=answer.replace("ํา","ำ")
 
-        return answer,np.e**ans_prob_score
+            if use_threshold:
+                if answer=="ไม่มีคำตอบ" and ans_prob_score<threshold:
+                    answer=self.tokenizer.decode(outs[input_id+1], skip_special_tokens=True)
+                    ans_prob_score=prob_score[1]
 
+            
+            if use_text_search:
+                
+                answer = add_unit_to_answer(context,AD_BE_convert(context,answer),question)
+                if answer not in context and answer!="ไม่มีคำตอบ":
+                    answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)[0]
+
+            answer_list.append((answer,np.e**ans_prob_score))
+        
+        if is_not_batch:
+            return answer_list[0]
+        else:
+            return answer_list
 
 class E2EQGPipeline:
     def __init__(
@@ -553,6 +588,77 @@ class E2EQGPipeline:
         return inputs
 
 
+class QAsimpleTransformers :
+    def __init__(
+        self,
+        model,
+        max_seq_length=384,
+        max_answer_length=30,
+        n_best_size=1,
+        eval_batch_size=8
+    ) :
+        model_args = QuestionAnsweringArgs()
+        model_args.eval_batch_size = eval_batch_size
+        model_args.max_seq_length=max_seq_length
+        model_args.max_answer_length=max_answer_length
+        model_args.n_best_size=n_best_size
+
+        self.model = QuestionAnsweringModel(
+            "xlmroberta",model, args=model_args
+        )
+        self.corrector_tokenizer , self.corrector_dict = create_custom_tokenizer()
+
+    def __call__(self, inputs: Union[Dict, str]):
+        
+        # do qa            
+        if "use_text_search" not in inputs:
+            inputs["use_text_search"]=False
+        if "correct_before_pred" not in inputs:
+            inputs["correct_before_pred"]=True
+        return self.question_answering(inputs["question"], inputs["context"],inputs["use_text_search"],inputs["correct_before_pred"])
+           
+    def convert_to_simpletransformers_format(self,question_list,context_list):
+        to_predict=[]
+        for i in range(len(context_list)):
+            to_predict.append({"context":context_list[i],"qas":[{"question":question_list[i],"id":str(i)}]})
+        return to_predict
+
+    def question_answering(self, question, context, use_text_search, correct_before_pred):
+
+        is_not_batch = type(question)==str
+
+        if correct_before_pred:
+            if is_not_batch:
+            
+                question=[spell_correct(question,self.corrector_tokenizer,self.corrector_dict)]
+                context=[spell_correct(context,self.corrector_tokenizer,self.corrector_dict)]
+            else :
+                question=[spell_correct(q,self.corrector_tokenizer,self.corrector_dict) for q in question]
+                context=[spell_correct(c,self.corrector_tokenizer,self.corrector_dict) for c in context]
+
+        to_predict = self.convert_to_simpletransformers_format(question,context)
+        answers, probabilities = self.model.predict(to_predict)
+        answers = [ans["answer"][0] for ans in answers]
+        probabilities = [prob["answer"][0] for prob in probabilities]
+
+        answer_list = []
+
+        for i in range(len(answers)):
+            answer=answers[i]
+            if use_text_search:
+                
+                answer = add_unit_to_answer(context,AD_BE_convert(context,answer),question)
+                if answer not in context and answer!="empty" and answer!="":
+                    answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)[0]
+
+            answer_list.append((answer,probabilities[i]))
+        
+        if is_not_batch:
+            return answer_list[0]
+        else:
+            return answer_list
+
+
 SUPPORTED_TASKS = {
     "question-generation": {
         "impl": QGPipeline,
@@ -567,12 +673,20 @@ SUPPORTED_TASKS = {
             "model": "valhalla/t5-small-qa-qg-hl",
         }
     },
+    "question-answering": {
+        "impl": MultiTaskQAQGPipeline,
+        "default": {
+            "model": "valhalla/t5-small-qa-qg-hl",
+        }
+    },
+
     "e2e-qg": {
         "impl": E2EQGPipeline,
         "default": {
             "model": "valhalla/t5-small-e2e-qg",
         }
     }
+
 }
 
 def pipeline(
@@ -583,13 +697,23 @@ def pipeline(
     ans_model: Optional = None,
     ans_tokenizer: Optional[Union[str, PreTrainedTokenizer]] = None,
     use_cuda: Optional[bool] = True,
+    model_type: Optional[str] = "mt5",
+    max_answer_length: Optional[int] = 30,
+    max_seq_length: Optional[int] = 384,
+    n_best_size: Optional[int] = 1,
+    eval_batch_size: Optional[int] = 8,
     **kwargs,
 ):
     # Retrieve the task
     if task not in SUPPORTED_TASKS:
         raise KeyError("Unknown task {}, available tasks are {}".format(task, list(SUPPORTED_TASKS.keys())))
 
+    if task=="question_answering" and model_type=="xlm-roberta":
+        return QAsimpleTransformers(model=model, max_seq_length=max_seq_length, max_answer_length=max_answer_length,n_best_size=n_best_size,eval_batch_size=eval_batch_size)
+
     targeted_task = SUPPORTED_TASKS[task]
+
+
     task_class = targeted_task["impl"]
 
     # Use default model/config/tokenizer for the task if no model is provided
@@ -651,6 +775,8 @@ def pipeline(
     if task == "e2e-qg":
         return task_class(model=model, tokenizer=tokenizer, use_cuda=use_cuda)
     elif task == "question-generation":
-        return task_class(model=model, tokenizer=tokenizer, ans_model=ans_model, ans_tokenizer=ans_tokenizer, qg_format=qg_format, use_cuda=use_cuda)
+        return task_class(model=model, tokenizer=tokenizer, ans_model=ans_model, ans_tokenizer=ans_tokenizer, qg_format=qg_format, use_cuda=use_cuda,only_qa_support=False)
+    elif task == "multitask-qa-qg":
+        return task_class(model=model, tokenizer=tokenizer, ans_model=model, ans_tokenizer=tokenizer, qg_format=qg_format, use_cuda=use_cuda,only_qa_support=False)
     else:
-        return task_class(model=model, tokenizer=tokenizer, ans_model=model, ans_tokenizer=tokenizer, qg_format=qg_format, use_cuda=use_cuda)
+        return task_class(model=model, tokenizer=tokenizer, ans_model=model, ans_tokenizer=tokenizer, qg_format=qg_format, use_cuda=use_cuda,only_qa_support=True)
