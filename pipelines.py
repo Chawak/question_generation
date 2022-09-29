@@ -472,22 +472,23 @@ class MultiTaskQAQGPipeline(QGPipeline):
 
         
           prob_score+=tmp_outs.sequences_scores.tolist()
-          outs+=tmp_outs.sequences
+          outs+=[tmp_outs.sequences]
         
-        outs = torch.cat(outs,dim=0)
+        # outs = torch.cat(outs,dim=0)
 
         answer_list = []
+
 
         for input_id in range(0,len(outs),2):
             ans_prob_score=prob_score[0]
 
-            answer = self.tokenizer.decode(outs[input_id], skip_special_tokens=True)
+            answer = self.tokenizer.decode(outs[input_id][0], skip_special_tokens=True)
             
             answer=answer.replace("ํา","ำ")
 
             if use_threshold:
                 if answer=="ไม่มีคำตอบ" and ans_prob_score<threshold:
-                    answer=self.tokenizer.decode(outs[input_id+1], skip_special_tokens=True)
+                    answer=self.tokenizer.decode(outs[input_id+1][0], skip_special_tokens=True)
                     ans_prob_score=prob_score[1]
 
             
