@@ -453,7 +453,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
                 question=[spell_correct(q,self.corrector_tokenizer,self.corrector_dict) for q in question]
                 context=[spell_correct(c,self.corrector_tokenizer,self.corrector_dict) for c in context]
             source_text = [self._prepare_inputs_for_qa(q, c) for q,c in zip(question,context)]
-            inputs = self._tokenize(source_text, padding=False)
+            inputs = self._tokenize(source_text)
 
         outs = self.model.generate(
             input_ids=inputs['input_ids'].to(self.device), 
@@ -639,7 +639,7 @@ class QAsimpleTransformers :
         to_predict = self.convert_to_simpletransformers_format(question,context)
         answers, probabilities = self.model.predict(to_predict)
         answers = [ans["answer"][0] for ans in answers]
-        probabilities = [prob["answer"][0] for prob in probabilities]
+        probabilities = [prob["probability"][0] for prob in probabilities]
 
         answer_list = []
 
@@ -708,7 +708,7 @@ def pipeline(
     if task not in SUPPORTED_TASKS:
         raise KeyError("Unknown task {}, available tasks are {}".format(task, list(SUPPORTED_TASKS.keys())))
 
-    if task=="question_answering" and model_type=="xlm-roberta":
+    if task=="question-answering" and model_type=="xlm-roberta":
         return QAsimpleTransformers(model=model, max_seq_length=max_seq_length, max_answer_length=max_answer_length,n_best_size=n_best_size,eval_batch_size=eval_batch_size)
 
     targeted_task = SUPPORTED_TASKS[task]
