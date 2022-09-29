@@ -479,7 +479,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
         answer_list = []
 
 
-        for input_id in range(0,len(outs),2):
+        for input_id in range(0,len(outs)):
             ans_prob_score=prob_score[0]
 
             answer = self.tokenizer.decode(outs[input_id][0], skip_special_tokens=True)
@@ -488,7 +488,7 @@ class MultiTaskQAQGPipeline(QGPipeline):
 
             if use_threshold:
                 if answer=="ไม่มีคำตอบ" and ans_prob_score<threshold:
-                    answer=self.tokenizer.decode(outs[input_id+1][0], skip_special_tokens=True)
+                    answer=self.tokenizer.decode(outs[input_id][1], skip_special_tokens=True)
                     ans_prob_score=prob_score[1]
 
             
