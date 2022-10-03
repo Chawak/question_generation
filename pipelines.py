@@ -50,6 +50,15 @@ class QGPipeline:
         only_qa_support :bool
     ):
         self.only_qa_support = only_qa_support
+        
+        self.corrector_tokenizer , self.corrector_dict = create_custom_tokenizer()
+
+        self.model = model
+        self.model.eval()
+        self.tokenizer = tokenizer
+
+        self.device = "cuda" if torch.cuda.is_available() and use_cuda else "cpu"
+        self.model.to(self.device)
 
         if not only_qa_support:
             self.th_ner_tokenizer = AutoTokenizer.from_pretrained(
@@ -74,17 +83,6 @@ class QGPipeline:
                 self.ans_model.to(self.device)
 
             self.qg_format = qg_format
-
-
-        self.corrector_tokenizer , self.corrector_dict = create_custom_tokenizer()
-
-        self.model = model
-        self.model.eval()
-        self.tokenizer = tokenizer
-
-        self.device = "cuda" if torch.cuda.is_available() and use_cuda else "cpu"
-        self.model.to(self.device)
-
 
         assert self.model.__class__.__name__ in ["T5ForConditionalGeneration", "BartForConditionalGeneration","MT5ForConditionalGeneration","MBartForConditionalGeneration"]
         
@@ -717,7 +715,7 @@ def pipeline(
     if task not in SUPPORTED_TASKS:
         raise KeyError("Unknown task {}, available tasks are {}".format(task, list(SUPPORTED_TASKS.keys())))
 
-    if task=="question-answering" and model_type=="xlm-roberta":
+    if (task=="question-answering" or task=="multitask-qa-qg") and model_type=="xlm-roberta":
         return QAsimpleTransformers(model=model, max_seq_length=max_seq_length, max_answer_length=max_answer_length,n_best_size=n_best_size,eval_batch_size=eval_batch_size)
 
     targeted_task = SUPPORTED_TASKS[task]
