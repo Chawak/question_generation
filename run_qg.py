@@ -13,6 +13,7 @@ from transformers import (
     AutoModelForSeq2SeqLM,
     AutoTokenizer,
     T5Tokenizer,
+    ByT5Tokenizer,
     BartTokenizer,
     MBartTokenizer,
     HfArgumentParser,
@@ -29,6 +30,7 @@ MODEL_TYPE_TO_TOKENIZER = {
     "t5": T5Tokenizer,
     "mt5": T5Tokenizer,
     "mt5-small":T5Tokenizer,
+    "byt5":ByT5Tokenizer,
     "mbart": MBartTokenizer,
     "bart": BartTokenizer,
 }
@@ -112,7 +114,7 @@ def main(args_file=None):
 
     assert model_args.model_type in list(MODEL_TYPE_TO_TOKENIZER.keys()), "model type should be 't5', 'bart', 'mt5','mt5-small' or 'mbart'" 
 
-    training_args.save_steps=2400
+    # training_args.save_steps=2400
     if (
         os.path.exists(training_args.output_dir)
         and os.listdir(training_args.output_dir)

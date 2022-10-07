@@ -478,22 +478,25 @@ class MultiTaskQAQGPipeline(QGPipeline):
 
 
         for input_id in range(0,len(outs)):
-            ans_prob_score=prob_score[0]
+            ans_prob_score=prob_score[input_id*2]
 
             answer = self.tokenizer.decode(outs[input_id][0], skip_special_tokens=True)
             
             answer=answer.replace("ํา","ำ")
 
+            if answer=="ไม่มีคำตอบ":
+                answer = "empty"
+
             if use_threshold:
-                if answer=="ไม่มีคำตอบ" and ans_prob_score<threshold:
+                if answer=="empty" and ans_prob_score<threshold:
                     answer=self.tokenizer.decode(outs[input_id][1], skip_special_tokens=True)
-                    ans_prob_score=prob_score[1]
+                    ans_prob_score=prob_score[input_id*2+1]
 
             
             if use_text_search:
                 
                 answer = add_unit_to_answer(context,AD_BE_convert(context,answer),question)
-                if answer not in context and answer!="ไม่มีคำตอบ":
+                if answer not in context and answer!="empty":
                     answer = get_best_match_qa(answer,context,step=1,flex=len(answer)//2-1)[0]
 
             answer_list.append((answer,np.e**ans_prob_score))
